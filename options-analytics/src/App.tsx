@@ -200,19 +200,35 @@ function App() {
   const chartData = useMemo(() => {
     if (legs.length === 0) return [];
     const points = [];
-    // Wide range for panning/zooming
-    const minPrice = SPOT_PRICE * 0.5;
-    const maxPrice = SPOT_PRICE * 1.5;
-    const step = (maxPrice - minPrice) / 100;
+    const pointPrices = new Set<number>();
+    const minPrice = SPOT_PRICE * 0.7;
+    const maxPrice = SPOT_PRICE * 1.3;
+    const stepCount = 120;
+    const stepSize = (maxPrice - minPrice) / stepCount;
 
-    for (let p = minPrice; p <= maxPrice; p += step) {
-      const point: any = { price: Math.round(p) };
+    // Add regular steps
+    for (let i = 0; i <= stepCount; i++) {
+       pointPrices.add(Math.round(minPrice + i * stepSize));
+    }
+    // CRITICAL: Add all strikes to perfectly capture "corners"
+    legs.forEach(l => pointPrices.add(l.strike));
+    
+    const sortedPrices = Array.from(pointPrices).sort((a,b) => a - b);
+
+    for (const p of sortedPrices) {
+      const point: any = { price: p };
       for (let t = 0; t < TIME_STEPS; t++) {
         const dte = totalDTE * (1 - t / (TIME_STEPS - 1));
         const T = Math.max(0, dte) / 365;
+        const isExp = t === TIME_STEPS - 1;
         let pnl = 0;
         legs.forEach(leg => {
-          const val = bsPrice(p, leg.strike, T, RISK_FREE, IV, leg.type);
+          let val = 0;
+          if (isExp) {
+            val = leg.type === 'Call' ? Math.max(0, p - leg.strike) : Math.max(0, leg.strike - p);
+          } else {
+            val = bsPrice(p, leg.strike, T, RISK_FREE, IV, leg.type);
+          }
           const mult = leg.position === 'Long' ? 1 : -1;
           pnl += (val - leg.premium) * leg.qty * mult;
         });
@@ -239,11 +255,26 @@ function App() {
         let d = 0, g = 0, v = 0, th = 0, chm = 0;
         legs.forEach(leg => {
           const mult = leg.qty * (leg.position === 'Long' ? 1 : -1);
-          d += bsDelta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
-          g += bsGamma(p, leg.strike, T, RISK_FREE, IV) * mult;
-          v += bsVega(p, leg.strike, T, RISK_FREE, IV) * mult;
-          th += bsTheta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
-          chm += bsCharm(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
+          if (tIdx === TIME_STEPS - 1) {
+            // Expiry Greeks logic
+            if (leg.type === 'Call') {
+              d += p > leg.strike ? 1 * (leg.position === 'Long' ? 1 : -1) : 0;
+            } else {
+              d += p < leg.strike ? -1 * (leg.position === 'Long' ? 1 : -1) : 0;
+            }
+            // Gamma, Vega, Theta, Charm are theoretically Infinite or Zero at expiry
+            // We use a very small T for them to show the peak, but for Delta we use the step function.
+            g += bsGamma(p, leg.strike, 0.0001 / 365, RISK_FREE, IV) * mult;
+            v += 0;
+            th += 0;
+            chm += 0;
+          } else {
+            d += bsDelta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
+            g += bsGamma(p, leg.strike, T, RISK_FREE, IV) * mult;
+            v += bsVega(p, leg.strike, T, RISK_FREE, IV) * mult;
+            th += bsTheta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
+            chm += bsCharm(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
+          }
         });
         point[`delta_${suffix}`] = isFinite(d) ? d : 0;
         point[`gamma_${suffix}`] = isFinite(g) ? g : 0;
@@ -396,12 +427,11 @@ function App() {
                        return (
                         <Line 
                           key={key} 
-                          type="monotone" 
+                          type={isExpiry ? "linear" : "monotone"} 
                           dataKey={key} 
                           name={label} 
                           stroke={color} 
                           strokeWidth={isExpiry ? 3 : (isNow ? 2.5 : 1.2)} 
-                          strokeDasharray={isExpiry ? '5 5' : undefined}
                           dot={false} 
                           animationDuration={300}
                         />

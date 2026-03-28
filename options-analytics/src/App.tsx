@@ -5,10 +5,16 @@ import './App.css';
 
 // ─── Constants & Types ───────────────────────────────────────────────────────
 
-const SPOT_PRICE = 90000;
 const RISK_FREE = 0.05;
 const IV = 0.25;
 const TIME_STEPS = 8; // T+0 to T+7 (Expiry)
+
+const ASSETS = [
+  { id: 'Si', name: 'Si (USD/RUB)', symbol: 'SI-6.26', defaultSpot: 103450, step: 250 },
+  { id: 'SR', name: 'SBER (Sberbank)', symbol: 'SR-6.26', defaultSpot: 28550, step: 250 },
+  { id: 'GZ', name: 'GAZP (Gazprom)', symbol: 'GZ-6.26', defaultSpot: 16180, step: 100 },
+  { id: 'BR', name: 'Brent Oil', symbol: 'BR-5.26', defaultSpot: 84.2, step: 0.5 },
+];
 
 interface OptionLeg {
   id: string;
@@ -107,21 +113,23 @@ function calculateIV(target: number, S: number, K: number, T: number, r: number,
 function App() {
   const [apiStatus, setApiStatus] = useState<'connected' | 'error'>('connected');
   const [strikeCount, setStrikeCount] = useState(20);
-  const [selectedExpiry, setSelectedExpiry] = useState('2026-04-17');
-  const [totalDTE, setTotalDTE] = useState(30);
+  const [selectedAsset, setSelectedAsset] = useState(ASSETS[0]);
+  const [spotPrice, setSpotPrice] = useState(ASSETS[0].defaultSpot);
+  const [selectedExpiry, setSelectedExpiry] = useState('2026-06-18');
+  const [totalDTE, setTotalDTE] = useState(82);
   const [legs, setLegs] = useState<OptionLeg[]>([]);
 
   // ─── Chart Interactivity State ───────────────────────────────────────────────
   
   const boardRange = useMemo(() => {
-    const step = 500;
+    const step = selectedAsset.step;
     const half = Math.floor(strikeCount / 2);
-    const min = SPOT_PRICE - half * step;
+    const min = Math.round(spotPrice / step) * step - half * step;
     const max = min + (strikeCount - 1) * step;
-    return { min, max };
-  }, [strikeCount]);
+    return { min, max, step };
+  }, [strikeCount, spotPrice, selectedAsset]);
 
-  const [chartRange, setChartRange] = useState({ min: SPOT_PRICE - 5000, max: SPOT_PRICE + 5000 });
+  const [chartRange, setChartRange] = useState({ min: spotPrice * 0.95, max: spotPrice * 1.05 });
   const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
   const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
 
@@ -170,19 +178,17 @@ function App() {
 
   const optionBoardData = useMemo(() => {
     const data = [];
-    const step = 500;
-    const half = Math.floor(strikeCount / 2);
-    const startStrike = SPOT_PRICE - half * step;
+    const { min, step } = boardRange;
     
     for (let i = 0; i < strikeCount; i++) {
-      const strike = startStrike + i * step;
-      const dist = Math.abs(strike - SPOT_PRICE) / SPOT_PRICE;
+      const strike = min + i * step;
+      const dist = Math.abs(strike - spotPrice) / spotPrice;
       const callIV = 0.2 + dist * 0.5;
       const putIV = 0.22 + dist * 0.45;
       const T = totalDTE / 365;
       
-      const callPrice = bsPrice(SPOT_PRICE, strike, T, RISK_FREE, callIV, 'Call');
-      const putPrice = bsPrice(SPOT_PRICE, strike, T, RISK_FREE, putIV, 'Put');
+      const callPrice = bsPrice(spotPrice, strike, T, RISK_FREE, callIV, 'Call');
+      const putPrice = bsPrice(spotPrice, strike, T, RISK_FREE, putIV, 'Put');
       
       data.push({
         strike,
@@ -208,8 +214,8 @@ function App() {
     if (legs.length === 0) return [];
     const points = [];
     const pointPrices = new Set<number>();
-    const minPrice = SPOT_PRICE * 0.7;
-    const maxPrice = SPOT_PRICE * 1.3;
+    const minPrice = spotPrice * 0.7;
+    const maxPrice = spotPrice * 1.3;
     const stepCount = 120;
     const stepSize = (maxPrice - minPrice) / stepCount;
 
@@ -333,24 +339,56 @@ function App() {
         <div className="brand">
           <Server className="text-secondary" />
           <div className="brand-text">
-            <h1>Antigravity Options</h1>
-            <span className="text-muted">Pro Analytics Dashboard</span>
+            <h1>Antigravity</h1>
+            <span className="text-muted">Options Analytics</span>
           </div>
         </div>
-        <div className="controls-bar">
-          <div className="button-glass">
-            <Clock size={16} />
-            <select value={selectedExpiry} onChange={e => setSelectedExpiry(e.target.value)}>
-              <option value="2026-04-17">17 APR 26 (30d)</option>
-              <option value="2026-05-15">15 MAY 26 (58d)</option>
+
+        <div className="global-nav">
+          <div className="nav-group">
+            <span className="nav-label">Рынок:</span>
+            <div className="button-glass active">Срочный (FORTS)</div>
+          </div>
+          
+          <div className="nav-group">
+            <span className="nav-label">Актив:</span>
+            <select 
+              className="select-glass" 
+              value={selectedAsset.id} 
+              onChange={e => {
+                const asset = ASSETS.find(a => a.id === e.target.value)!;
+                setSelectedAsset(asset);
+                setSpotPrice(asset.defaultSpot);
+              }}
+            >
+              {ASSETS.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
-          <div className="top-info">
-            <div className={`api-status ${apiStatus}`}>
-              <Activity size={14} />
-              {apiStatus === 'connected' ? 'LIVE' : 'OFFLINE'}
-            </div>
-            <button className="button-primary">Trade</button>
+
+          <div className="nav-group">
+            <span className="nav-label">Экспирация:</span>
+            <select className="select-glass" value={selectedExpiry} onChange={e => setSelectedExpiry(e.target.value)}>
+              <option value="2026-06-18">18 JUN 26 (Квартальный)</option>
+              <option value="2026-04-16">16 APR 26 (Месячный)</option>
+            </select>
+          </div>
+
+          <div className="nav-group">
+            <span className="nav-label">Spot:</span>
+            <input 
+              type="number" 
+              className="input-glass" 
+              style={{ width: 80, textAlign: 'right' }} 
+              value={spotPrice} 
+              onChange={e => setSpotPrice(Number(e.target.value))} 
+            />
+          </div>
+        </div>
+
+        <div className="top-info">
+          <div className={`api-status ${apiStatus}`}>
+            <Activity size={14} />
+            {apiStatus === 'connected' ? 'LIVE' : 'OFFLINE'}
           </div>
         </div>
       </header>
@@ -363,7 +401,7 @@ function App() {
               <BarChart3 size={18} className="text-secondary" />
               Options Board
             </div>
-            <div style={{ fontSize: 12 }}>Spot: <strong>{SPOT_PRICE}</strong></div>
+            <div style={{ fontSize: 12 }}>Spot: <strong>{spotPrice}</strong></div>
           </div>
           
           <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }}>
@@ -385,7 +423,7 @@ function App() {
               </thead>
               <tbody>
                 {optionBoardData.map(row => (
-                  <tr key={row.strike} className={Math.abs(row.strike - SPOT_PRICE) < 250 ? 'atm-row' : ''}>
+                  <tr key={row.strike} className={Math.abs(row.strike - spotPrice) < 250 ? 'atm-row' : ''}>
                     <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.callIV * 100).toFixed(0)}%</td>
                     <td className="call-cell" onClick={() => addLeg('Call', 'Short', row.strike, row.callBid)}>{row.callBid}</td>
                     <td className="call-cell" onClick={() => addLeg('Call', 'Long', row.strike, row.callAsk)}>{row.callAsk}</td>
@@ -417,7 +455,7 @@ function App() {
                     itemStyle={{ color: '#3b82f6' }}
                     labelFormatter={v => `Strike: ${v}`}
                   />
-                  <ReferenceLine x={SPOT_PRICE} stroke="#3b82f6" strokeDasharray="3 3" opacity={0.5} />
+                  <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="3 3" opacity={0.5} />
                   <Line type="monotone" dataKey="iv" stroke="#3b82f6" strokeWidth={2} dot={false} animationDuration={300} />
                 </LineChart>
               </ResponsiveContainer>
@@ -450,7 +488,7 @@ function App() {
                       labelStyle={{ color: '#fff', fontWeight: 600 }}
                       labelFormatter={v => `Цена БА: ${v.toLocaleString()}`} 
                     />
-                    <ReferenceLine x={SPOT_PRICE} stroke="#3b82f6" strokeDasharray="3 3" label={{ position: 'top', value: 'Spot', fill: '#3b82f6', fontSize: 10, fontWeight: 600 }} />
+                    <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="3 3" label={{ position: 'top', value: 'Spot', fill: '#3b82f6', fontSize: 10, fontWeight: 600 }} />
                     <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
                     {timeLineKeys.map(({ key, label }, idx) => {
                        const isExpiry = idx === TIME_STEPS - 1;
@@ -486,13 +524,13 @@ function App() {
                 const T = Math.max(0.001, totalDTE) / 365;
                 const sign = leg.position === 'Long' ? 1 : -1;
                 const qtyMult = leg.qty * sign;
-                const currentVal = bsPrice(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type);
+                const currentVal = bsPrice(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type);
                 const legProfit = Math.round((currentVal - leg.premium) * leg.qty * sign);
-                const d = bsDelta(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
-                const g = bsGamma(SPOT_PRICE, leg.strike, T, RISK_FREE, IV) * qtyMult;
-                const v = bsVega(SPOT_PRICE, leg.strike, T, RISK_FREE, IV) * qtyMult;
-                const th = bsTheta(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
-                const ch = bsCharm(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
+                const d = bsDelta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
+                const g = bsGamma(spotPrice, leg.strike, T, RISK_FREE, IV) * qtyMult;
+                const v = bsVega(spotPrice, leg.strike, T, RISK_FREE, IV) * qtyMult;
+                const th = bsTheta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
+                const ch = bsCharm(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
 
                 return (
                   <div key={leg.id} className="leg-row" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '12px 20px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, fontSize: 14, borderLeft: `5px solid ${leg.type === 'Call' ? '#10b981' : '#ef4444'}` }}>
@@ -562,13 +600,13 @@ function App() {
                 legs.forEach(leg => {
                   const s = leg.position === 'Long' ? 1 : -1;
                   const q = leg.qty * s;
-                  const curVal = bsPrice(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type);
+                  const curVal = bsPrice(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type);
                   tPnL += Math.round((curVal - leg.premium) * leg.qty * s);
-                  tD += bsDelta(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type) * q;
-                  tG += bsGamma(SPOT_PRICE, leg.strike, T, RISK_FREE, IV) * q;
-                  tV += bsVega(SPOT_PRICE, leg.strike, T, RISK_FREE, IV) * q;
-                  tTh += bsTheta(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type) * q;
-                  tCh += bsCharm(SPOT_PRICE, leg.strike, T, RISK_FREE, IV, leg.type) * q;
+                  tD += bsDelta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * q;
+                  tG += bsGamma(spotPrice, leg.strike, T, RISK_FREE, IV) * q;
+                  tV += bsVega(spotPrice, leg.strike, T, RISK_FREE, IV) * q;
+                  tTh += bsTheta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * q;
+                  tCh += bsCharm(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * q;
                 });
 
                 return (

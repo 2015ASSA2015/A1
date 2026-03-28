@@ -435,11 +435,44 @@ function App() {
                 return (
                   <div key={leg.id} className="leg-row" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '12px 20px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, fontSize: 14, borderLeft: `5px solid ${leg.type === 'Call' ? '#10b981' : '#ef4444'}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: 130 }}>
-                      <button className="leg-toggle" onClick={() => updateLeg(leg.id, { position: leg.position === 'Long' ? 'Short' : 'Long' })} style={{ width: 26, height: 26, fontSize: 16 }}>{leg.position === 'Long' ? '+' : '−'}</button>
+                      <button 
+                        className="leg-toggle" 
+                        onClick={() => updateLeg(leg.id, { position: leg.position === 'Long' ? 'Short' : 'Long' })} 
+                        style={{ 
+                          width: 28, 
+                          height: 28, 
+                          fontSize: 18, 
+                          color: leg.position === 'Long' ? '#10b981' : '#ef4444',
+                          borderColor: leg.position === 'Long' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+                          background: 'rgba(255,255,255,0.03)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        {leg.position === 'Long' ? '+' : '−'}
+                      </button>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <button className="leg-qty-btn" onClick={() => updateLeg(leg.id, { qty: Math.max(1, leg.qty - 1) })}>−</button>
-                        <span style={{ fontWeight: 'bold', width: 24, textAlign: 'center' }}>{leg.qty}</span>
-                        <button className="leg-qty-btn" onClick={() => updateLeg(leg.id, { qty: leg.qty + 1 })}>+</button>
+                        <button className="leg-qty-btn" onClick={() => updateLeg(leg.id, { qty: Math.max(1, leg.qty - 1) })} style={{ width: 20, height: 20 }}>−</button>
+                        <input 
+                          type="number"
+                          className="leg-input"
+                          value={leg.qty}
+                          onChange={e => updateLeg(leg.id, { qty: Math.max(1, Number(e.target.value) || 1) })}
+                          style={{ 
+                            width: 45, 
+                            textAlign: 'center', 
+                            fontWeight: 'bold', 
+                            fontSize: 14, 
+                            padding: '2px 0', 
+                            background: 'rgba(0,0,0,0.2)',
+                            border: '1px solid var(--border-glass)',
+                            borderRadius: '4px',
+                            color: '#fff'
+                          }}
+                        />
+                        <button className="leg-qty-btn" onClick={() => updateLeg(leg.id, { qty: leg.qty + 1 })} style={{ width: 20, height: 20 }}>+</button>
                       </div>
                     </div>
                     <div style={{ width: 60, fontWeight: 'bold', fontSize: 15 }}>{leg.type}</div>

@@ -91,7 +91,8 @@ class AlorApi:
 # --- Пример использования (для теста) ---
 async def test_main():
     # Замените на ваш реальный Refresh Token
-    MY_REFRESH_TOKEN = "ВАШ_ТОКЕН_ТУТ"
+    MY_REFRESH_TOKEN = "48ca265c-b7e6-4c25-b45e-bd7cb194feae"
+    print(f"Попытка подключения с токеном: {MY_REFRESH_TOKEN[:5]}...***")
     api = AlorApi(MY_REFRESH_TOKEN)
 
     async def handle_data(data):
@@ -109,5 +110,4 @@ async def test_main():
     ws_task.cancel()
 
 if __name__ == "__main__":
-    # asyncio.run(test_main())
-    pass
+    asyncio.run(test_main())

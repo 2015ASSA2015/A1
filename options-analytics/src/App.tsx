@@ -197,6 +197,13 @@ function App() {
     return data;
   }, [strikeCount, totalDTE]);
 
+  const smileData = useMemo(() => {
+    return optionBoardData.map(d => ({
+      strike: d.strike,
+      iv: Number((Math.max(d.callIV, d.putIV) * 100).toFixed(2))
+    }));
+  }, [optionBoardData]);
+
   const chartData = useMemo(() => {
     if (legs.length === 0) return [];
     const points = [];
@@ -367,7 +374,7 @@ function App() {
             </div>
           </div>
 
-          <div className="board-container" style={{ flex: 1, overflowY: 'auto' }}>
+          <div className="board-container" style={{ maxHeight: '60%', overflowY: 'auto' }}>
             <table className="board-table">
               <thead>
                 <tr>
@@ -390,6 +397,31 @@ function App() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="smile-widget" style={{ marginTop: 'auto', paddingTop: 20 }}>
+            <div className="widget-header" style={{ marginBottom: 10, padding: 0 }}>
+              <div className="widget-title" style={{ fontSize: 13 }}>
+                <TrendingUp size={16} className="text-secondary" />
+                Volatility Smile (IV)
+              </div>
+            </div>
+            <div style={{ height: 160, width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={smileData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="strike" hide />
+                  <YAxis stroke="#90a0b6" fontSize={9} domain={['auto', 'auto']} unit="%" />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 10 }}
+                    itemStyle={{ color: '#3b82f6' }}
+                    labelFormatter={v => `Strike: ${v}`}
+                  />
+                  <ReferenceLine x={SPOT_PRICE} stroke="#3b82f6" strokeDasharray="3 3" opacity={0.5} />
+                  <Line type="monotone" dataKey="iv" stroke="#3b82f6" strokeWidth={2} dot={false} animationDuration={300} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </aside>
 

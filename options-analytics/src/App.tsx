@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend, ReferenceArea } from 'recharts';
 import { Server, Activity, TrendingUp, BarChart3, Triangle } from 'lucide-react';
 import './App.css';
+import { PnLAttributionPanel } from './components/PnLAttributionPanel';
+import type { OptionLegData } from './utils/blackScholes';
 
 // ─── Constants & Types ───────────────────────────────────────────────────────
 
@@ -98,7 +100,6 @@ function bsCharm(S: number, K: number, T: number, r: number, sigma: number, type
 // ─── App Component ───────────────────────────────────────────────────────────
 
 function App() {
-  const [apiStatus] = useState<'connected' | 'error'>('connected');
   const [strikeCount, setStrikeCount] = useState(20);
   const [selectedAsset, setSelectedAsset] = useState(ASSETS[0]);
   const [spotPrice, setSpotPrice] = useState(ASSETS[0].defaultSpot);
@@ -108,22 +109,27 @@ function App() {
   const [legs, setLegs] = useState<OptionLeg[]>([]);
   const [isLive, setIsLive] = useState(false);
 
+  // P&L Attribution: Entry point tracking
+  const [spotEntry, setSpotEntry] = useState<number | null>(null);
+  const [ivEntry, setIvEntry] = useState<number>(IV);
+  const [entryTimestamp, setEntryTimestamp] = useState<number | null>(null);
+
   // ─── Live Market Simulator ───────────────────────────────────────────────
-  
+
   useEffect(() => {
     if (!isLive) return;
-    
+
     // Simulate tick data every 800ms
     const interval = setInterval(() => {
       setSpotPrice(prev => {
         // Simple random walk with slightly mean-reverting drift
         const asset = ASSETS[0];
-        const volatility = asset.step * 0.4; 
+        const volatility = asset.step * 0.4;
         const change = (Math.random() - 0.5) * volatility;
         return Math.round(prev + change);
       });
     }, 800);
-    
+
     return () => clearInterval(interval);
   }, [isLive]);
 
@@ -142,27 +148,27 @@ function App() {
     const maxLines = 6;
 
     for (let i = 0; i <= maxLines; i++) {
-        const daysForward = i * timeStepDays;
-        if (daysForward < totalDTE) {
-            steps.push({
-                key: `pnl_${i}`,
-                label: i === 0 ? 'T+0 (сейчас)' : `T+${daysForward}`,
-                dte: totalDTE - daysForward
-            });
-        }
+      const daysForward = i * timeStepDays;
+      if (daysForward < totalDTE) {
+        steps.push({
+          key: `pnl_${i}`,
+          label: i === 0 ? 'T+0 (сейчас)' : `T+${daysForward}`,
+          dte: totalDTE - daysForward
+        });
+      }
     }
-    
+
     steps.push({
-        key: `pnl_exp`,
-        label: `Экспирация (T+${totalDTE})`,
-        dte: 0
+      key: `pnl_exp`,
+      label: `Экспирация (T+${totalDTE})`,
+      dte: 0
     });
 
     return steps;
   }, [totalDTE, timeStepDays]);
 
   // ─── Chart Interactivity State ───────────────────────────────────────────────
-  
+
   const boardRange = useMemo(() => {
     const step = selectedAsset.step;
     const half = Math.floor(strikeCount / 2);
@@ -236,7 +242,7 @@ function App() {
   const optionBoardData = useMemo(() => {
     const data = [];
     const { min, step } = boardRange;
-    
+
     for (let i = 0; i < strikeCount; i++) {
       const strike = min + i * step;
       // Mathematically realistic quadratic Volatility Smile with right-tail skew (typical for Si).
@@ -252,20 +258,20 @@ function App() {
       const callIV = modeledIV;
       const putIV = modeledIV;
       const T = totalDTE / 365;
-      
+
       const callPrice = bsPrice(spotPrice, strike, T, RISK_FREE, callIV, 'Call');
       const putPrice = bsPrice(spotPrice, strike, T, RISK_FREE, putIV, 'Put');
-      
+
       const callDelta = bsDelta(spotPrice, strike, T, RISK_FREE, callIV, 'Call');
       const putDelta = bsDelta(spotPrice, strike, T, RISK_FREE, putIV, 'Put');
-      
+
       // Simulated Liquidity: peaks near ATM and psychological round strikes
       const dist = Math.abs(strike - spotPrice) / spotPrice;
-      const baseVol = 8000 * Math.exp(-Math.pow(dist * 18, 2)); 
+      const baseVol = 8000 * Math.exp(-Math.pow(dist * 18, 2));
       const roundSpike = strike % 5000 === 0 ? 6000 : 0;
       const callVol = Math.round(baseVol + roundSpike * (0.5 + Math.random() * 0.5)) + Math.floor(Math.random() * 100);
       const putVol = Math.round(baseVol + roundSpike * (0.5 + Math.random() * 0.5)) + Math.floor(Math.random() * 100);
-      
+
       data.push({
         strike,
         callVol,
@@ -301,16 +307,16 @@ function App() {
 
     // Add regular steps
     for (let i = 0; i <= stepCount; i++) {
-       pointPrices.add(Math.round(minPrice + i * stepSize));
+      pointPrices.add(Math.round(minPrice + i * stepSize));
     }
     // CRITICAL: Add all strikes to perfectly capture "corners"
     legs.forEach(l => pointPrices.add(l.strike));
-    
-    const sortedPrices = Array.from(pointPrices).sort((a,b) => a - b);
+
+    const sortedPrices = Array.from(pointPrices).sort((a, b) => a - b);
 
     for (const p of sortedPrices) {
       const point: any = { price: p };
-      timeSteps.forEach((step, idx) => {
+      timeSteps.forEach((step, _idx) => {
         const T = step.dte / 365;
         const isExp = step.dte === 0;
         let pnl = 0;
@@ -380,14 +386,31 @@ function App() {
 
   const addLeg = (type: 'Call' | 'Put', pos: 'Long' | 'Short', strike: number, premium: number, iv: number) => {
     const id = `${type}-${strike}-${Date.now()}`;
-    setLegs([...legs, { id, type, strike, qty: 1, premium, position: pos, iv }]);
+    const newLeg = { id, type, strike, qty: 1, premium, position: pos, iv };
+    setLegs([...legs, newLeg]);
+
+    // Set entry point on first leg or when adding a new position
+    if (legs.length === 0) {
+      setSpotEntry(spotPrice);
+      setIvEntry(iv);
+      setEntryTimestamp(Date.now());
+    }
   };
 
   const updateLeg = (id: string, updates: Partial<OptionLeg>) => {
     setLegs(legs.map(l => l.id === id ? { ...l, ...updates } : l));
   };
 
-  const removeLeg = (id: string) => setLegs(legs.filter(l => l.id !== id));
+  const removeLeg = (id: string) => {
+    const remainingLegs = legs.filter(l => l.id !== id);
+    setLegs(remainingLegs);
+    // Reset entry point if no legs left
+    if (remainingLegs.length === 0) {
+      setSpotEntry(null);
+      setIvEntry(IV);
+      setEntryTimestamp(null);
+    }
+  };
 
   const totalPremium = legs.reduce((sum, l) => sum + (l.premium * l.qty * (l.position === 'Long' ? -1 : 1)), 0);
   const maxRisk = useMemo(() => {
@@ -405,7 +428,7 @@ function App() {
   }, [chartData, timeSteps, legs]);
 
   // MOEX / FORTS Margin Proxy: uses the ±30% bounds worst-case scan (similar to SPAN)
-  const marginGO = maxRisk !== null ? Math.max(maxRisk, 1) : 0; 
+  const marginGO = maxRisk !== null ? Math.max(maxRisk, 1) : 0;
   const roc = maxProfit !== null && marginGO > 1 ? (maxProfit / marginGO) * 100 : 0;
   const annualizedRoc = totalDTE > 0 ? roc * (365 / Math.max(1, totalDTE)) : roc * 365;
 
@@ -425,12 +448,12 @@ function App() {
     if (legs.length === 0 || timeSteps.length === 0 || chartData.length === 0) return { breakevens: [], pop: null };
     const lastKey = timeSteps[timeSteps.length - 1].key;
     const bes: number[] = [];
-    
+
     // Scan vertices for algorithmic crossings
     for (let i = 0; i < chartData.length - 1; i++) {
       const p1 = chartData[i].price, v1 = chartData[i][lastKey];
-      const p2 = chartData[i+1].price, v2 = chartData[i+1][lastKey];
-      if (v1 === 0 && (i === 0 || chartData[i-1][lastKey] !== 0)) {
+      const p2 = chartData[i + 1].price, v2 = chartData[i + 1][lastKey];
+      if (v1 === 0 && (i === 0 || chartData[i - 1][lastKey] !== 0)) {
         bes.push(p1);
       } else if (v1 * v2 < 0) {
         const ratio = Math.abs(v1) / (Math.abs(v1) + Math.abs(v2));
@@ -443,24 +466,24 @@ function App() {
     const T = Math.max(0.001, totalDTE) / 365;
     const atmIV = 0.20;
     const cdf = (x: number) => {
-       const d2 = (Math.log(spotPrice / x) - (atmIV * atmIV / 2) * T) / (atmIV * Math.sqrt(T));
-       return normalCDF(-d2);
+      const d2 = (Math.log(spotPrice / x) - (atmIV * atmIV / 2) * T) / (atmIV * Math.sqrt(T));
+      return normalCDF(-d2);
     };
 
-    const bounds = [0, ...bes, chartData[chartData.length-1].price * 10]; // [0 ... BEs ... Infinity]
+    const bounds = [0, ...bes, chartData[chartData.length - 1].price * 10]; // [0 ... BEs ... Infinity]
     for (let i = 0; i < bounds.length - 1; i++) {
-        const midPoint = (bounds[i] + bounds[i+1]) / 2;
-        let pnl = 0;
-        legs.forEach(leg => {
-           let val = leg.type === 'Call' ? Math.max(0, midPoint - leg.strike) : Math.max(0, leg.strike - midPoint);
-           pnl += (val - leg.premium) * leg.qty * (leg.position === 'Long' ? 1 : -1);
-        });
-        if (pnl > 0) profitProb += (cdf(bounds[i+1]) - (bounds[i] === 0 ? 0 : cdf(bounds[i])));
+      const midPoint = (bounds[i] + bounds[i + 1]) / 2;
+      let pnl = 0;
+      legs.forEach(leg => {
+        let val = leg.type === 'Call' ? Math.max(0, midPoint - leg.strike) : Math.max(0, leg.strike - midPoint);
+        pnl += (val - leg.premium) * leg.qty * (leg.position === 'Long' ? 1 : -1);
+      });
+      if (pnl > 0) profitProb += (cdf(bounds[i + 1]) - (bounds[i] === 0 ? 0 : cdf(bounds[i])));
     }
-    
-    return { 
-      breakevens: [...new Set(bes)].sort((a,b)=>a-b), 
-      pop: Math.min(100, Math.max(0, profitProb * 100)) 
+
+    return {
+      breakevens: [...new Set(bes)].sort((a, b) => a - b),
+      pop: Math.min(100, Math.max(0, profitProb * 100))
     };
   }, [chartData, timeSteps, legs, spotPrice, totalDTE]);
 
@@ -488,12 +511,12 @@ function App() {
             <span className="nav-label">Рынок:</span>
             <div className="button-glass active" style={{ fontSize: 13, background: 'rgba(59, 130, 246, 0.2)', borderColor: '#3b82f6' }}>Срочный (FORTS)</div>
           </div>
-          
+
           <div className="nav-group border-left">
             <span className="nav-label">Актив:</span>
-            <select 
-              className="select-glass focus-asset" 
-              value={selectedAsset.id} 
+            <select
+              className="select-glass focus-asset"
+              value={selectedAsset.id}
               onChange={e => {
                 const asset = ASSETS.find(a => a.id === e.target.value)!;
                 setSelectedAsset(asset);
@@ -515,11 +538,11 @@ function App() {
 
           <div className="nav-group border-left">
             <span className="nav-label">Шаг:</span>
-            <input 
-              type="number" 
-              className="input-glass" 
-              value={timeStepDays} 
-              onChange={e => setTimeStepDays(Math.max(1, Number(e.target.value)))} 
+            <input
+              type="number"
+              className="input-glass"
+              value={timeStepDays}
+              onChange={e => setTimeStepDays(Math.max(1, Number(e.target.value)))}
               style={{ width: 45, padding: '2px 4px', textAlign: 'center' }}
               title="Шаг распада (в днях)"
             />
@@ -529,11 +552,11 @@ function App() {
           <div className="nav-group border-left">
             <span className="nav-label">Spot:</span>
             <div className="spot-input-wrapper">
-              <input 
-                type="number" 
-                className="input-glass spot-main-input" 
-                value={spotPrice} 
-                onChange={e => setSpotPrice(Number(e.target.value))} 
+              <input
+                type="number"
+                className="input-glass spot-main-input"
+                value={spotPrice}
+                onChange={e => setSpotPrice(Number(e.target.value))}
               />
               <TrendingUp size={14} className="spot-icon" />
             </div>
@@ -541,7 +564,7 @@ function App() {
         </div>
 
         <div className="top-info">
-          <div 
+          <div
             className={`api-status ${isLive ? 'connected' : 'offline'}`}
             onClick={() => setIsLive(!isLive)}
             style={{ cursor: 'pointer', transition: 'all 0.3s' }}
@@ -563,7 +586,7 @@ function App() {
             </div>
             <div style={{ fontSize: 12 }}>Spot: <strong>{spotPrice}</strong></div>
           </div>
-          
+
           <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }}>
             <div className="strike-count-toggle">
               {[10, 20, 30].map(n => (
@@ -599,7 +622,7 @@ function App() {
                   // Heatmap percentages
                   const cVolPct = Math.min(100, Math.round((row.callVol / 15000) * 100));
                   const pVolPct = Math.min(100, Math.round((row.putVol / 15000) * 100));
-                  
+
                   return (
                     <tr key={row.strike} className={Math.abs(row.strike - spotPrice) < 250 ? 'atm-row' : ''}>
                       <td style={{ fontSize: 9, opacity: 0.8, color: '#90a0b6', position: 'relative' }}>
@@ -637,14 +660,14 @@ function App() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={smileData} margin={{ top: 5, right: 10, left: -20, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis 
-                    dataKey="strike" 
-                    stroke="#90a0b6" 
-                    fontSize={8} 
+                  <XAxis
+                    dataKey="strike"
+                    stroke="#90a0b6"
+                    fontSize={8}
                     tickFormatter={v => v.toLocaleString()}
                   />
                   <YAxis stroke="#90a0b6" fontSize={9} domain={['auto', 'auto']} unit="%" />
-                  <Tooltip 
+                  <Tooltip
                     contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 10 }}
                     itemStyle={{ color: '#3b82f6' }}
                     labelFormatter={v => `Strike: ${v}`}
@@ -682,18 +705,18 @@ function App() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                     <XAxis dataKey="price" stroke="#90a0b6" fontSize={10} domain={[chartRange.min, chartRange.max]} type="number" allowDataOverflow ticks={axisTicks} tickFormatter={v => (v / 1000).toFixed(1) + 'k'} />
                     <YAxis stroke="#90a0b6" fontSize={10} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }} 
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 12 }}
                       labelStyle={{ color: '#fff', fontWeight: 600 }}
-                      labelFormatter={v => `Цена БА: ${v.toLocaleString()}`} 
+                      labelFormatter={v => `Цена БА: ${v.toLocaleString()}`}
                     />
-                    
+
                     {/* Probability Cone / ±1 STD Expected Move */}
-                    <ReferenceArea 
-                      x1={expectedMove.lower} 
-                      x2={expectedMove.upper} 
-                      fill="rgba(16, 185, 129, 0.05)" 
-                      strokeOpacity={0} 
+                    <ReferenceArea
+                      x1={expectedMove.lower}
+                      x2={expectedMove.upper}
+                      fill="rgba(16, 185, 129, 0.05)"
+                      strokeOpacity={0}
                     />
                     <ReferenceLine x={expectedMove.lower} stroke="rgba(16, 185, 129, 0.25)" strokeDasharray="3 3" label={{ position: 'insideBottomLeft', value: '-1σ', fill: 'rgba(16, 185, 129, 0.7)', fontSize: 10, offset: 10 }} />
                     <ReferenceLine x={expectedMove.upper} stroke="rgba(16, 185, 129, 0.25)" strokeDasharray="3 3" label={{ position: 'insideBottomRight', value: '+1σ', fill: 'rgba(16, 185, 129, 0.7)', fontSize: 10, offset: 10 }} />
@@ -701,14 +724,14 @@ function App() {
                     <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="3 3" label={{ position: 'top', value: 'Spot', fill: '#3b82f6', fontSize: 10, fontWeight: 600 }} />
                     <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
                     {timeSteps.map((step, idx) => (
-                      <Line 
-                        key={step.key} 
-                        type="linear" 
-                        dataKey={step.key} 
-                        name={step.label} 
-                        stroke={TIME_LINE_COLORS[idx % TIME_LINE_COLORS.length]} 
-                        strokeWidth={step.dte === 0 ? 3 : (idx === 0 ? 2.5 : 1.2)} 
-                        dot={false} 
+                      <Line
+                        key={step.key}
+                        type="linear"
+                        dataKey={step.key}
+                        name={step.label}
+                        stroke={TIME_LINE_COLORS[idx % TIME_LINE_COLORS.length]}
+                        strokeWidth={step.dte === 0 ? 3 : (idx === 0 ? 2.5 : 1.2)}
+                        dot={false}
                         animationDuration={300}
                       />
                     ))}
@@ -741,13 +764,13 @@ function App() {
                 return (
                   <div key={leg.id} className="leg-row" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '12px 20px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, fontSize: 14, borderLeft: `5px solid ${leg.type === 'Call' ? '#10b981' : '#ef4444'}` }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: 130 }}>
-                      <button 
-                        className="leg-toggle" 
-                        onClick={() => updateLeg(leg.id, { position: leg.position === 'Long' ? 'Short' : 'Long' })} 
-                        style={{ 
-                          width: 28, 
-                          height: 28, 
-                          fontSize: 18, 
+                      <button
+                        className="leg-toggle"
+                        onClick={() => updateLeg(leg.id, { position: leg.position === 'Long' ? 'Short' : 'Long' })}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          fontSize: 18,
                           color: leg.position === 'Long' ? '#10b981' : '#ef4444',
                           borderColor: leg.position === 'Long' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)',
                           background: 'rgba(255,255,255,0.03)',
@@ -761,17 +784,17 @@ function App() {
                       </button>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <button className="leg-qty-btn" onClick={() => updateLeg(leg.id, { qty: Math.max(1, leg.qty - 1) })} style={{ width: 20, height: 20 }}>−</button>
-                        <input 
+                        <input
                           type="number"
                           className="leg-input"
                           value={leg.qty}
                           onChange={e => updateLeg(leg.id, { qty: Math.max(1, Number(e.target.value) || 1) })}
-                          style={{ 
-                            width: 45, 
-                            textAlign: 'center', 
-                            fontWeight: 'bold', 
-                            fontSize: 14, 
-                            padding: '2px 0', 
+                          style={{
+                            width: 45,
+                            textAlign: 'center',
+                            fontWeight: 'bold',
+                            fontSize: 14,
+                            padding: '2px 0',
                             background: 'rgba(0,0,0,0.2)',
                             border: '1px solid var(--border-glass)',
                             borderRadius: '4px',
@@ -822,7 +845,7 @@ function App() {
                     <div style={{ width: 60 }}></div>
                     <div style={{ width: 230 }}></div>
                     <div className={tPnL >= 0 ? 'text-profit' : 'text-loss'} style={{ width: 100, textAlign: 'center', fontWeight: 800, fontSize: 18 }}>
-                        {tPnL >= 0 ? '+' : ''}{tPnL.toLocaleString()}
+                      {tPnL >= 0 ? '+' : ''}{tPnL.toLocaleString()}
                     </div>
                     <div style={{ display: 'flex', gap: 25, flex: 1, paddingLeft: 20, borderLeft: '1px solid rgba(59, 130, 246, 0.3)', fontWeight: 700 }}>
                       <div style={{ width: 70 }}><span style={{ opacity: 0.5, fontSize: 11 }}>Δ </span>{tD.toFixed(2)}</div>
@@ -840,6 +863,18 @@ function App() {
         </div>
       </div>
 
+      {/* P&L Attribution Panel */}
+      {legs.length > 0 && (
+        <PnLAttributionPanel
+          legs={legs as OptionLegData[]}
+          spotPrice={spotPrice}
+          spotEntry={spotEntry ?? spotPrice}
+          ivCurrent={legs.length > 0 ? legs[0].iv : IV}
+          ivEntry={ivEntry}
+          daysHeld={entryTimestamp ? Math.floor((Date.now() - entryTimestamp) / (1000 * 60 * 60 * 24)) : 0}
+        />
+      )}
+
       {greeksData.length > 0 && (
         <div className="greeks-panel">
           <div className="greeks-panel-header"><Triangle size={16} color="#8b5cf6" /> <span>Portfolio Greeks Detail</span></div>
@@ -853,9 +888,9 @@ function App() {
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                       <XAxis dataKey="price" stroke="#90a0b6" fontSize={9} tickFormatter={v => (v / 1000).toFixed(0) + 'k'} />
                       <YAxis stroke="#90a0b6" fontSize={9} />
-                      <Tooltip 
+                      <Tooltip
                         contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 11 }}
-                        labelFormatter={v => `Цена БА: ${v}`} 
+                        labelFormatter={v => `Цена БА: ${v}`}
                       />
                       <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="2 2" />
                       <ReferenceLine y={0} stroke="rgba(255,255,255,0.1)" />

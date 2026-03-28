@@ -8,7 +8,7 @@ import './App.css';
 const SPOT_PRICE = 90000;
 const RISK_FREE = 0.05;
 const IV = 0.25;
-const TIME_STEPS = 5; // T-0, T-1, ..., Expiry
+const TIME_STEPS = 8; // T+0 to T+7 (Expiry)
 
 interface OptionLeg {
   id: string;
@@ -21,9 +21,12 @@ interface OptionLeg {
 
 const TIME_LINE_COLORS = [
   '#f59e0b', // T+0 (Orange)
-  '#a855f7', // T+1 (Purple)
-  '#8b5cf6', // T+2 (Violet)
-  '#6366f1', // T+3 (Indigo)
+  '#d946ef', // T+1 (Magenta)
+  '#a855f7', // T+2 (Purple)
+  '#8b5cf6', // T+3 (Violet)
+  '#6366f1', // T+4 (Indigo)
+  '#3b82f6', // T+5 (Blue)
+  '#0ea5e9', // T+6 (Sky)
   '#10b981'  // Expiry (Green)
 ];
 const EXPIRY_COLOR = '#10b981';
@@ -82,7 +85,8 @@ function bsCharm(S: number, K: number, T: number, r: number, sigma: number, type
   const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
   const d2 = d1 - sigma * Math.sqrt(T);
   const term1 = normalPDF(d1) * (r / (sigma * Math.sqrt(T)) - d2 / (2 * T));
-  return (type === 'Call' ? -term1 : term1) / 365;
+  const res = (type === 'Call' ? -term1 : term1) / 365;
+  return isFinite(res) ? res : 0;
 }
 
 function calculateIV(target: number, S: number, K: number, T: number, r: number, type: 'Call' | 'Put') {
@@ -241,11 +245,11 @@ function App() {
           th += bsTheta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
           chm += bsCharm(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
         });
-        point[`delta_${suffix}`] = d;
-        point[`gamma_${suffix}`] = g;
-        point[`vega_${suffix}`] = v;
-        point[`theta_${suffix}`] = th;
-        point[`charm_${suffix}`] = chm;
+        point[`delta_${suffix}`] = isFinite(d) ? d : 0;
+        point[`gamma_${suffix}`] = isFinite(g) ? g : 0;
+        point[`vega_${suffix}`] = isFinite(v) ? v : 0;
+        point[`theta_${suffix}`] = isFinite(th) ? th : 0;
+        point[`charm_${suffix}`] = isFinite(chm) ? chm : 0;
       }
       points.push(point);
     }
@@ -274,13 +278,13 @@ function App() {
 
   const timeLineKeys = Array.from({ length: TIME_STEPS }, (_, i) => ({
     key: `pnl_${i}`,
-    label: i === TIME_STEPS - 1 ? 'Expiry' : i === 0 ? 'Today' : `T+${i}`
+    label: i === TIME_STEPS - 1 ? `Экспирация (T+${i})` : i === 0 ? 'T+0 (сейчас)' : `T+${i}`
   }));
 
   const GREEKS_META = [
     { key: 'delta', label: 'Delta (Δ)', color: '#10b981', unit: '' },
     { key: 'gamma', label: 'Gamma (Γ)', color: '#8b5cf6', unit: '' },
-    { key: 'vega', label: 'Vega (ν) / 1%', color: '#f59e0b', unit: '' },
+    { key: 'vega', label: 'Vega (v) / 1%', color: '#f59e0b', unit: '' },
     { key: 'theta', label: 'Theta (θ) / day', color: '#ef4444', unit: '' },
     { key: 'charm', label: 'Charm / day', color: '#3b82f6', unit: '' },
   ];
@@ -397,6 +401,7 @@ function App() {
                           name={label} 
                           stroke={color} 
                           strokeWidth={isExpiry ? 3 : (isNow ? 2.5 : 1.2)} 
+                          strokeDasharray={isExpiry ? '5 5' : undefined}
                           dot={false} 
                           animationDuration={300}
                         />
@@ -514,7 +519,7 @@ function App() {
                       />
                       <ReferenceLine x={SPOT_PRICE} stroke="#3b82f6" strokeDasharray="2 2" />
                       <ReferenceLine y={0} stroke="rgba(255,255,255,0.1)" />
-                      {timeLineKeys.map(({ key: tlKey, label: tlLabel }, idx) => {
+                      {timeLineKeys.map((_, idx) => {
                         const isExpiry = idx === TIME_STEPS - 1;
                         const isNow = idx === 0;
                         const dataKey = `${g.key}_${idx}`;
@@ -526,6 +531,7 @@ function App() {
                             dataKey={dataKey}
                             stroke={color}
                             strokeWidth={isExpiry ? 2.5 : isNow ? 2 : 1.2}
+                            strokeDasharray={isExpiry ? '5 5' : undefined}
                             dot={false}
                             opacity={isExpiry || isNow ? 1 : 0.45}
                             animationDuration={0}

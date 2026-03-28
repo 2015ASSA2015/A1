@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend, ReferenceArea } from 'recharts';
-import { Server, Activity, TrendingUp, Search, BarChart3, Layers, Clock, Triangle } from 'lucide-react';
+import { Server, Activity, TrendingUp, BarChart3, Triangle } from 'lucide-react';
 import './App.css';
 
 // ─── Constants & Types ───────────────────────────────────────────────────────
@@ -35,8 +35,7 @@ const TIME_LINE_COLORS = [
   '#0ea5e9', // T+6 (Sky)
   '#10b981'  // Expiry (Green)
 ];
-const EXPIRY_COLOR = '#10b981';
-const TODAY_COLOR = '#f59e0b';
+
 
 // ─── Math Utilities (Black-Scholes-76) ────────────────────────────────────────
 
@@ -95,28 +94,16 @@ function bsCharm(S: number, K: number, T: number, r: number, sigma: number, type
   return isFinite(res) ? res : 0;
 }
 
-function calculateIV(target: number, S: number, K: number, T: number, r: number, type: 'Call' | 'Put') {
-  let sigma = 0.3;
-  for (let i = 0; i < 20; i++) {
-    const price = bsPrice(S, K, T, r, sigma, type);
-    const diff = target - price;
-    if (Math.abs(diff) < 0.001) return sigma;
-    const vega = bsVega(S, K, T, r, sigma) * 100;
-    if (vega < 0.0001) break;
-    sigma += diff / vega;
-  }
-  return sigma;
-}
 
 // ─── App Component ───────────────────────────────────────────────────────────
 
 function App() {
-  const [apiStatus, setApiStatus] = useState<'connected' | 'error'>('connected');
+  const [apiStatus] = useState<'connected' | 'error'>('connected');
   const [strikeCount, setStrikeCount] = useState(20);
   const [selectedAsset, setSelectedAsset] = useState(ASSETS[0]);
   const [spotPrice, setSpotPrice] = useState(ASSETS[0].defaultSpot);
   const [selectedExpiry, setSelectedExpiry] = useState('2026-06-18');
-  const [totalDTE, setTotalDTE] = useState(82);
+  const [totalDTE] = useState(82);
   const [legs, setLegs] = useState<OptionLeg[]>([]);
 
   // ─── Chart Interactivity State ───────────────────────────────────────────────
@@ -347,13 +334,13 @@ function App() {
         <div className="global-nav">
           <div className="nav-group">
             <span className="nav-label">Рынок:</span>
-            <div className="button-glass active">Срочный (FORTS)</div>
+            <div className="button-glass active" style={{ fontSize: 13, background: 'rgba(59, 130, 246, 0.2)', borderColor: '#3b82f6' }}>Срочный (FORTS)</div>
           </div>
           
-          <div className="nav-group">
+          <div className="nav-group border-left">
             <span className="nav-label">Актив:</span>
             <select 
-              className="select-glass" 
+              className="select-glass focus-asset" 
               value={selectedAsset.id} 
               onChange={e => {
                 const asset = ASSETS.find(a => a.id === e.target.value)!;
@@ -365,23 +352,25 @@ function App() {
             </select>
           </div>
 
-          <div className="nav-group">
+          <div className="nav-group border-left">
             <span className="nav-label">Экспирация:</span>
             <select className="select-glass" value={selectedExpiry} onChange={e => setSelectedExpiry(e.target.value)}>
-              <option value="2026-06-18">18 JUN 26 (Квартальный)</option>
-              <option value="2026-04-16">16 APR 26 (Месячный)</option>
+              <option value="2026-06-18">18 JUN 26 (КВАРТ.)</option>
+              <option value="2026-04-16">16 APR 26 (МЕС.)</option>
             </select>
           </div>
 
-          <div className="nav-group">
+          <div className="nav-group border-left">
             <span className="nav-label">Spot:</span>
-            <input 
-              type="number" 
-              className="input-glass" 
-              style={{ width: 80, textAlign: 'right' }} 
-              value={spotPrice} 
-              onChange={e => setSpotPrice(Number(e.target.value))} 
-            />
+            <div className="spot-input-wrapper">
+              <input 
+                type="number" 
+                className="input-glass spot-main-input" 
+                value={spotPrice} 
+                onChange={e => setSpotPrice(Number(e.target.value))} 
+              />
+              <TrendingUp size={14} className="spot-icon" />
+            </div>
           </div>
         </div>
 
@@ -650,7 +639,7 @@ function App() {
                         contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 11 }}
                         labelFormatter={v => `Цена БА: ${v}`} 
                       />
-                      <ReferenceLine x={SPOT_PRICE} stroke="#3b82f6" strokeDasharray="2 2" />
+                      <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="2 2" />
                       <ReferenceLine y={0} stroke="rgba(255,255,255,0.1)" />
                       {timeLineKeys.map((_, idx) => {
                         const isExpiry = idx === TIME_STEPS - 1;
@@ -664,7 +653,7 @@ function App() {
                             dataKey={dataKey}
                             stroke={color}
                             strokeWidth={isExpiry ? 2.5 : isNow ? 2 : 1.2}
-                            strokeDasharray={isExpiry ? '5 5' : undefined}
+                            strokeDasharray={isExpiry ? undefined : '5 5'}
                             dot={false}
                             opacity={isExpiry || isNow ? 1 : 0.45}
                             animationDuration={0}

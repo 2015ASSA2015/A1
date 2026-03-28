@@ -6,38 +6,114 @@
   gap: 20px;
 }
 
-.top-bar {
+.header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 24px;
+  padding: 10px 0;
+  margin-bottom: 24px;
+  gap: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .brand {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.brand-text h1 {
+  font-size: 18px;
+  letter-spacing: -0.5px;
+}
+
+.global-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: rgba(10, 12, 16, 0.6);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.nav-group {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 4px 16px;
+  height: 36px;
 }
 
-.brand h1 {
-  font-size: 20px;
-  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+.border-left {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.controls-bar {
+.nav-label {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+}
+
+.select-glass {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  padding-right: 20px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 5 3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right center;
+}
+
+.select-glass:hover {
+  color: #3b82f6;
+}
+
+.spot-input-wrapper {
+  position: relative;
   display: flex;
-  gap: 16px;
   align-items: center;
-  flex-wrap: wrap;
+}
+
+.spot-main-input {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #3b82f6;
+  font-size: 15px;
+  font-weight: 800;
+  padding: 4px 34px 4px 12px;
+  border-radius: 8px;
+  width: 110px;
+  text-align: right;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.spot-main-input:focus {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
+}
+
+.spot-icon {
+  position: absolute;
+  right: 10px;
+  color: #3b82f6;
+  pointer-events: none;
+  opacity: 0.7;
 }
 
 .top-info {
-  display: flex;
-  gap: 16px;
-  align-items: center;
+  flex-shrink: 0;
 }
 
 .api-status {

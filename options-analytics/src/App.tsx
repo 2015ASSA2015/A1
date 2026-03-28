@@ -5,9 +5,18 @@ import './App.css';
 
 // ─── Constants & Types ───────────────────────────────────────────────────────
 
-const RISK_FREE = 0.05;
+const RISK_FREE = 0; // Fixed: FORTS margined options use r=0 because there is no cost of carry or discounting
 const IV = 0.25;
-const TIME_STEPS = 8; // T+0 to T+7 (Expiry)
+const TIME_LINE_COLORS = [
+  '#f59e0b', // T+0 (Orange)
+  '#d946ef', // T+1 (Magenta)
+  '#a855f7', // T+2 (Purple)
+  '#8b5cf6', // T+3 (Violet)
+  '#6366f1', // T+4 (Indigo)
+  '#3b82f6', // T+5 (Blue)
+  '#0ea5e9', // T+6 (Sky)
+  '#10b981'  // Expiry (Green)
+];
 
 const ASSETS = [
   { id: 'Si', name: 'Si (USD/RUB)', symbol: 'SI-6.26', defaultSpot: 103450, step: 250 },
@@ -23,18 +32,9 @@ interface OptionLeg {
   qty: number;
   premium: number;
   position: 'Long' | 'Short';
+  iv: number;
 }
 
-const TIME_LINE_COLORS = [
-  '#f59e0b', // T+0 (Orange)
-  '#d946ef', // T+1 (Magenta)
-  '#a855f7', // T+2 (Purple)
-  '#8b5cf6', // T+3 (Violet)
-  '#6366f1', // T+4 (Indigo)
-  '#3b82f6', // T+5 (Blue)
-  '#0ea5e9', // T+6 (Sky)
-  '#10b981'  // Expiry (Green)
-];
 
 
 // ─── Math Utilities (Black-Scholes-76) ────────────────────────────────────────
@@ -103,8 +103,43 @@ function App() {
   const [selectedAsset, setSelectedAsset] = useState(ASSETS[0]);
   const [spotPrice, setSpotPrice] = useState(ASSETS[0].defaultSpot);
   const [selectedExpiry, setSelectedExpiry] = useState('2026-06-18');
-  const [totalDTE] = useState(82);
+  const [totalDTE, setTotalDTE] = useState(82);
+  const [timeStepDays, setTimeStepDays] = useState(1);
   const [legs, setLegs] = useState<OptionLeg[]>([]);
+
+  // ─── Dynamic DTE Calculation ───────────────────────────────────────────────
+  useEffect(() => {
+    const today = new Date('2026-03-29'); // Baseline from system metadata
+    const expiryDate = new Date(selectedExpiry);
+    const diffTime = expiryDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    setTotalDTE(Math.max(0, diffDays));
+  }, [selectedExpiry]);
+
+  // Generate steps: T+0, T+n, ... and Expiry based on user-defined timeStepDays
+  const timeSteps = useMemo(() => {
+    const steps = [];
+    const maxLines = 6;
+
+    for (let i = 0; i <= maxLines; i++) {
+        const daysForward = i * timeStepDays;
+        if (daysForward < totalDTE) {
+            steps.push({
+                key: `pnl_${i}`,
+                label: i === 0 ? 'T+0 (сейчас)' : `T+${daysForward}`,
+                dte: totalDTE - daysForward
+            });
+        }
+    }
+    
+    steps.push({
+        key: `pnl_exp`,
+        label: `Экспирация (T+${totalDTE})`,
+        dte: 0
+    });
+
+    return steps;
+  }, [totalDTE, timeStepDays]);
 
   // ─── Chart Interactivity State ───────────────────────────────────────────────
   
@@ -179,11 +214,11 @@ function App() {
       
       data.push({
         strike,
-        callBid: Math.round(callPrice * 0.98),
-        callAsk: Math.round(callPrice * 1.02),
+        callBid: Math.round(callPrice * 0.998),
+        callAsk: Math.round(callPrice * 1.002),
         callIV,
-        putBid: Math.round(putPrice * 0.98),
-        putAsk: Math.round(putPrice * 1.02),
+        putBid: Math.round(putPrice * 0.998),
+        putAsk: Math.round(putPrice * 1.002),
         putIV,
       });
     }
@@ -203,7 +238,7 @@ function App() {
     const pointPrices = new Set<number>();
     const minPrice = spotPrice * 0.7;
     const maxPrice = spotPrice * 1.3;
-    const stepCount = 120;
+    const stepCount = 300;
     const stepSize = (maxPrice - minPrice) / stepCount;
 
     // Add regular steps
@@ -217,27 +252,26 @@ function App() {
 
     for (const p of sortedPrices) {
       const point: any = { price: p };
-      for (let t = 0; t < TIME_STEPS; t++) {
-        const dte = totalDTE * (1 - t / (TIME_STEPS - 1));
-        const T = Math.max(0, dte) / 365;
-        const isExp = t === TIME_STEPS - 1;
+      timeSteps.forEach((step, idx) => {
+        const T = step.dte / 365;
+        const isExp = step.dte === 0;
         let pnl = 0;
         legs.forEach(leg => {
           let val = 0;
           if (isExp) {
             val = leg.type === 'Call' ? Math.max(0, p - leg.strike) : Math.max(0, leg.strike - p);
           } else {
-            val = bsPrice(p, leg.strike, T, RISK_FREE, IV, leg.type);
+            val = bsPrice(p, leg.strike, T, RISK_FREE, leg.iv || IV, leg.type);
           }
           const mult = leg.position === 'Long' ? 1 : -1;
           pnl += (val - leg.premium) * leg.qty * mult;
         });
-        point[`pnl_${t}`] = Math.round(pnl);
-      }
+        point[step.key] = Math.round(pnl);
+      });
       points.push(point);
     }
     return points;
-  }, [legs, totalDTE]);
+  }, [legs, totalDTE, timeSteps]);
 
   const greeksData = useMemo(() => {
     if (legs.length === 0) return [];
@@ -248,50 +282,47 @@ function App() {
 
     for (let p = minPrice; p <= maxPrice; p += step) {
       const point: any = { price: Math.round(p) };
-      for (let tIdx = 0; tIdx < TIME_STEPS; tIdx++) {
-        const dte = totalDTE * (1 - tIdx / (TIME_STEPS - 1));
-        const T = Math.max(0.001, dte) / 365;
-        const suffix = tIdx;
+      timeSteps.forEach((stepItem) => {
+        const T = Math.max(0.001, stepItem.dte) / 365;
+        const key = stepItem.key.replace('pnl', ''); // uses _0, _1, _exp
         let d = 0, g = 0, v = 0, th = 0, chm = 0;
         legs.forEach(leg => {
           const mult = leg.qty * (leg.position === 'Long' ? 1 : -1);
-          if (tIdx === TIME_STEPS - 1) {
-            // Expiry Greeks logic
+          if (stepItem.dte === 0) {
             if (leg.type === 'Call') {
               d += p > leg.strike ? 1 * (leg.position === 'Long' ? 1 : -1) : 0;
             } else {
               d += p < leg.strike ? -1 * (leg.position === 'Long' ? 1 : -1) : 0;
             }
-            // Gamma, Vega, Theta, Charm are theoretically Infinite or Zero at expiry
-            // We use a very small T for them to show the peak, but for Delta we use the step function.
-            g += bsGamma(p, leg.strike, 0.0001 / 365, RISK_FREE, IV) * mult;
+            g += bsGamma(p, leg.strike, 0.0001 / 365, RISK_FREE, leg.iv || IV) * mult;
             v += 0;
             th += 0;
             chm += 0;
           } else {
-            d += bsDelta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
-            g += bsGamma(p, leg.strike, T, RISK_FREE, IV) * mult;
-            v += bsVega(p, leg.strike, T, RISK_FREE, IV) * mult;
-            th += bsTheta(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
-            chm += bsCharm(p, leg.strike, T, RISK_FREE, IV, leg.type) * mult;
+            const currentIV = leg.iv || IV;
+            d += bsDelta(p, leg.strike, T, RISK_FREE, currentIV, leg.type) * mult;
+            g += bsGamma(p, leg.strike, T, RISK_FREE, currentIV) * mult;
+            v += bsVega(p, leg.strike, T, RISK_FREE, currentIV) * mult;
+            th += bsTheta(p, leg.strike, T, RISK_FREE, currentIV, leg.type) * mult;
+            chm += bsCharm(p, leg.strike, T, RISK_FREE, currentIV, leg.type) * mult;
           }
         });
-        point[`delta_${suffix}`] = isFinite(d) ? d : 0;
-        point[`gamma_${suffix}`] = isFinite(g) ? g : 0;
-        point[`vega_${suffix}`] = isFinite(v) ? v : 0;
-        point[`theta_${suffix}`] = isFinite(th) ? th : 0;
-        point[`charm_${suffix}`] = isFinite(chm) ? chm : 0;
-      }
+        point[`delta${key}`] = isFinite(d) ? d : 0;
+        point[`gamma${key}`] = isFinite(g) ? g : 0;
+        point[`vega${key}`] = isFinite(v) ? v : 0;
+        point[`theta${key}`] = isFinite(th) ? th : 0;
+        point[`charm${key}`] = isFinite(chm) ? chm : 0;
+      });
       points.push(point);
     }
     return points;
-  }, [legs, totalDTE, chartRange]);
+  }, [legs, totalDTE, chartRange, timeSteps]);
 
   // ─── Actions ────────────────────────────────────────────────────────────────
 
-  const addLeg = (type: 'Call' | 'Put', pos: 'Long' | 'Short', strike: number, premium: number) => {
+  const addLeg = (type: 'Call' | 'Put', pos: 'Long' | 'Short', strike: number, premium: number, iv: number) => {
     const id = `${type}-${strike}-${Date.now()}`;
-    setLegs([...legs, { id, type, strike, qty: 1, premium, position: pos }]);
+    setLegs([...legs, { id, type, strike, qty: 1, premium, position: pos, iv }]);
   };
 
   const updateLeg = (id: string, updates: Partial<OptionLeg>) => {
@@ -302,15 +333,11 @@ function App() {
 
   const totalPremium = legs.reduce((sum, l) => sum + (l.premium * l.qty * (l.position === 'Long' ? -1 : 1)), 0);
   const maxRisk = useMemo(() => {
-    if (legs.length === 0) return null;
-    const expPnL = chartData.map(p => p[`pnl_${TIME_STEPS - 1}`]);
+    if (legs.length === 0 || timeSteps.length === 0 || chartData.length === 0) return null;
+    const lastKey = timeSteps[timeSteps.length - 1].key;
+    const expPnL = chartData.map(p => p[lastKey]);
     return Math.abs(Math.min(...expPnL, 0));
-  }, [chartData]);
-
-  const timeLineKeys = Array.from({ length: TIME_STEPS }, (_, i) => ({
-    key: `pnl_${i}`,
-    label: i === TIME_STEPS - 1 ? `Экспирация (T+${i})` : i === 0 ? 'T+0 (сейчас)' : `T+${i}`
-  }));
+  }, [chartData, timeSteps, legs]);
 
   const GREEKS_META = [
     { key: 'delta', label: 'Delta (Δ)', color: '#10b981', unit: '' },
@@ -355,9 +382,23 @@ function App() {
           <div className="nav-group border-left">
             <span className="nav-label">Экспирация:</span>
             <select className="select-glass" value={selectedExpiry} onChange={e => setSelectedExpiry(e.target.value)}>
-              <option value="2026-06-18">18 JUN 26 (КВАРТ.)</option>
+              <option value="2026-04-02">02 APR 26 (НЕДЕЛ.)</option>
               <option value="2026-04-16">16 APR 26 (МЕС.)</option>
+              <option value="2026-06-18">18 JUN 26 (КВАРТ.)</option>
             </select>
+          </div>
+
+          <div className="nav-group border-left">
+            <span className="nav-label">Шаг:</span>
+            <input 
+              type="number" 
+              className="input-glass" 
+              value={timeStepDays} 
+              onChange={e => setTimeStepDays(Math.max(1, Number(e.target.value)))} 
+              style={{ width: 45, padding: '2px 4px', textAlign: 'center' }}
+              title="Шаг распада (в днях)"
+            />
+            <span className="nav-label" style={{ marginLeft: 4 }}>дн.</span>
           </div>
 
           <div className="nav-group border-left">
@@ -414,11 +455,11 @@ function App() {
                 {optionBoardData.map(row => (
                   <tr key={row.strike} className={Math.abs(row.strike - spotPrice) < 250 ? 'atm-row' : ''}>
                     <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.callIV * 100).toFixed(0)}%</td>
-                    <td className="call-cell" onClick={() => addLeg('Call', 'Short', row.strike, row.callBid)}>{row.callBid}</td>
-                    <td className="call-cell" onClick={() => addLeg('Call', 'Long', row.strike, row.callAsk)}>{row.callAsk}</td>
+                    <td className="call-cell" onClick={() => addLeg('Call', 'Short', row.strike, row.callBid, row.callIV)}>{row.callBid}</td>
+                    <td className="call-cell" onClick={() => addLeg('Call', 'Long', row.strike, row.callAsk, row.callIV)}>{row.callAsk}</td>
                     <td className="strike-col">{row.strike}</td>
-                    <td className="put-cell" onClick={() => addLeg('Put', 'Short', row.strike, row.putBid)}>{row.putBid}</td>
-                    <td className="put-cell" onClick={() => addLeg('Put', 'Long', row.strike, row.putAsk)}>{row.putAsk}</td>
+                    <td className="put-cell" onClick={() => addLeg('Put', 'Short', row.strike, row.putBid, row.putIV)}>{row.putBid}</td>
+                    <td className="put-cell" onClick={() => addLeg('Put', 'Long', row.strike, row.putAsk, row.putIV)}>{row.putAsk}</td>
                     <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.putIV * 100).toFixed(0)}%</td>
                   </tr>
                 ))}
@@ -484,23 +525,18 @@ function App() {
                     />
                     <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="3 3" label={{ position: 'top', value: 'Spot', fill: '#3b82f6', fontSize: 10, fontWeight: 600 }} />
                     <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
-                    {timeLineKeys.map(({ key, label }, idx) => {
-                       const isExpiry = idx === TIME_STEPS - 1;
-                       const isNow = idx === 0;
-                       const color = TIME_LINE_COLORS[Math.min(idx, TIME_LINE_COLORS.length - 1)];
-                       return (
-                        <Line 
-                          key={key} 
-                          type={isExpiry ? "linear" : "monotone"} 
-                          dataKey={key} 
-                          name={label} 
-                          stroke={color} 
-                          strokeWidth={isExpiry ? 3 : (isNow ? 2.5 : 1.2)} 
-                          dot={false} 
-                          animationDuration={300}
-                        />
-                       );
-                    })}
+                    {timeSteps.map((step, idx) => (
+                      <Line 
+                        key={step.key} 
+                        type="linear" 
+                        dataKey={step.key} 
+                        name={step.label} 
+                        stroke={TIME_LINE_COLORS[idx % TIME_LINE_COLORS.length]} 
+                        strokeWidth={step.dte === 0 ? 3 : (idx === 0 ? 2.5 : 1.2)} 
+                        dot={false} 
+                        animationDuration={300}
+                      />
+                    ))}
                     <Legend iconType="line" wrapperStyle={{ fontSize: 10, paddingTop: 10 }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -518,13 +554,14 @@ function App() {
                 const T = Math.max(0.001, totalDTE) / 365;
                 const sign = leg.position === 'Long' ? 1 : -1;
                 const qtyMult = leg.qty * sign;
-                const currentVal = bsPrice(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type);
+                const currentIV = leg.iv || IV;
+                const currentVal = bsPrice(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type);
                 const legProfit = Math.round((currentVal - leg.premium) * leg.qty * sign);
-                const d = bsDelta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
-                const g = bsGamma(spotPrice, leg.strike, T, RISK_FREE, IV) * qtyMult;
-                const v = bsVega(spotPrice, leg.strike, T, RISK_FREE, IV) * qtyMult;
-                const th = bsTheta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
-                const ch = bsCharm(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * qtyMult;
+                const d = bsDelta(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type) * qtyMult;
+                const g = bsGamma(spotPrice, leg.strike, T, RISK_FREE, currentIV) * qtyMult;
+                const v = bsVega(spotPrice, leg.strike, T, RISK_FREE, currentIV) * qtyMult;
+                const th = bsTheta(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type) * qtyMult;
+                const ch = bsCharm(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type) * qtyMult;
 
                 return (
                   <div key={leg.id} className="leg-row" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '12px 20px', background: 'rgba(255,255,255,0.04)', borderRadius: 10, fontSize: 14, borderLeft: `5px solid ${leg.type === 'Call' ? '#10b981' : '#ef4444'}` }}>
@@ -594,13 +631,14 @@ function App() {
                 legs.forEach(leg => {
                   const s = leg.position === 'Long' ? 1 : -1;
                   const q = leg.qty * s;
-                  const curVal = bsPrice(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type);
+                  const currentIV = leg.iv || IV;
+                  const curVal = bsPrice(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type);
                   tPnL += Math.round((curVal - leg.premium) * leg.qty * s);
-                  tD += bsDelta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * q;
-                  tG += bsGamma(spotPrice, leg.strike, T, RISK_FREE, IV) * q;
-                  tV += bsVega(spotPrice, leg.strike, T, RISK_FREE, IV) * q;
-                  tTh += bsTheta(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * q;
-                  tCh += bsCharm(spotPrice, leg.strike, T, RISK_FREE, IV, leg.type) * q;
+                  tD += bsDelta(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type) * q;
+                  tG += bsGamma(spotPrice, leg.strike, T, RISK_FREE, currentIV) * q;
+                  tV += bsVega(spotPrice, leg.strike, T, RISK_FREE, currentIV) * q;
+                  tTh += bsTheta(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type) * q;
+                  tCh += bsCharm(spotPrice, leg.strike, T, RISK_FREE, currentIV, leg.type) * q;
                 });
 
                 return (
@@ -646,25 +684,19 @@ function App() {
                       />
                       <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="2 2" />
                       <ReferenceLine y={0} stroke="rgba(255,255,255,0.1)" />
-                      {timeLineKeys.map((_, idx) => {
-                        const isExpiry = idx === TIME_STEPS - 1;
-                        const isNow = idx === 0;
-                        const dataKey = `${g.key}_${idx}`;
-                        const color = TIME_LINE_COLORS[Math.min(idx, TIME_LINE_COLORS.length - 1)];
-                        return (
-                          <Line
-                            key={dataKey}
-                            type="monotone"
-                            dataKey={dataKey}
-                            stroke={color}
-                            strokeWidth={isExpiry ? 2.5 : isNow ? 2 : 1.2}
-                            strokeDasharray={isExpiry ? undefined : '5 5'}
-                            dot={false}
-                            opacity={isExpiry || isNow ? 1 : 0.45}
-                            animationDuration={0}
-                          />
-                        );
-                      })}
+                      {timeSteps.map((step, idx) => (
+                        <Line
+                          key={step.key}
+                          type="monotone"
+                          dataKey={`${g.key}${step.key.replace('pnl', '')}`}
+                          stroke={TIME_LINE_COLORS[idx % TIME_LINE_COLORS.length]}
+                          strokeWidth={step.dte === 0 ? 2.5 : idx === 0 ? 2 : 1.2}
+                          strokeDasharray={step.dte === 0 ? undefined : '5 5'}
+                          dot={false}
+                          opacity={step.dte === 0 || idx === 0 ? 1 : 0.45}
+                          animationDuration={0}
+                        />
+                      ))}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>

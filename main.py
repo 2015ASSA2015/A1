@@ -4,27 +4,42 @@ from options_analyzer import OptionsAnalyzer
 
 def main():
     print("=== АЛОР Опционный Аналитик ===")
-    
-    # Рекомендуется не хардкодить токен, а хранить в переменных окружения.
-    # Windows: setx ALOR_REFRESH_TOKEN "ваш_токен"
-    refresh_token = os.getenv("ALOR_REFRESH_TOKEN", "ТВОЙ_ТОКЕН_ЗДЕСЬ")
-    
-    if refresh_token == "ТВОЙ_ТОКЕН_ЗДЕСЬ":
-        print(">> Внимание: Токен пока не задан! Программа работает в структурированном режиме (Без запросов в АЛОР).\n")
-    
+
+    # Для тестирования токен вписан напрямую:
+    refresh_token = "48ca265c-b7e6-4c25-b45e-bd7cb194feae"
+
     # 1. Инициализируем API
     api = AlorApi(refresh_token)
-    
+
     # 2. Инициализируем Аналитику
     analyzer = OptionsAnalyzer(api)
+
+    # 3. Указываем базовый актив
+    # Si - фьючерс на доллар/рубль (базовый актив для опционов)
+    # RTS - фьючерс на индекс РТС (базовый актив для опционов)
+    # SiM6/RTSM6 - фьючерсные контракты с экспирацией в июне 2026
+    underlying = "RTS"  # Базовый актив для опционов (индекс РТС)
+    futures_contract = "RTSM6"  # Фьючерсный контракт для получения цены
     
-    # 3. Указываем базовый актив (например, фьючерс на доллар-рубль актуального контракта)
-    underlying = "SiM4" # Тестовый актив (актуальный нужно будет поменять)
-    
-    # 4. Запускаем анализ
-    df = analyzer.fetch_and_analyze(underlying)
-    
-    print("\nПрограмма успешно завершена.")
+    # 4. Опционально: указываем экспирацию (формат "MM.YY")
+    # Если None - будет использована ближайшая экспирация
+    expiration = "6.26"  # или None для автовыбора
+
+    print(f"\n📈 Базовый актив: {underlying}")
+    print(f"📄 Фьючерс: {futures_contract}")
+    if expiration:
+        print(f"📅 Экспирация: {expiration}")
+    else:
+        print("📅 Экспирация: ближайшая (автовыбор)")
+    print()
+
+    # 5. Запускаем анализ
+    df = analyzer.fetch_and_analyze(underlying, expiration=expiration, futures_contract=futures_contract)
+
+    if df.empty:
+        print("\n⚠️ Анализ не выполнен (нет данных)")
+    else:
+        print("\n✅ Программа успешно завершена.")
 
 if __name__ == "__main__":
     main()

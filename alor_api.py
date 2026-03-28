@@ -3,6 +3,7 @@ import time
 import json
 import asyncio
 import websockets
+import re
 
 class AlorApi:
     OAUTH_URL = "https://oauth.alor.ru/refresh"
@@ -59,6 +60,96 @@ class AlorApi:
         url = f"{self.API_URL}/md/v2/Securities/{exchange}/{symbol}"
         response = requests.get(url, headers=self._get_headers())
         return response.json() if response.status_code == 200 else None
+
+    def get_all_securities(self, exchange="MOEX", sector="FORTS", limit=1000):
+        """Получение списка всех инструментов с фильтрацией"""
+        url = f"{self.API_URL}/md/v2/Securities"
+        params = {"exchange": exchange, "sector": sector, "limit": limit}
+        response = requests.get(url, headers=self._get_headers(), params=params)
+        return response.json() if response.status_code == 200 else []
+
+    def get_options_by_underlying(self, underlying_symbol, exchange="MOEX", sector="FORTS"):
+        """
+        Получение списка опционов по базовому активу.
+        Опционы на ФОРТС имеют вид:
+        - "Марж. амер. Call 80 с исп. 18 июня на фьюч. контр. Si-6.26"
+        - "Нед. прем. европ. Put 90 с исп. 15 апр. на VTBR"
+        """
+        all_securities = self.get_all_securities(exchange, sector, limit=5000)
+        
+        # Нормализуем имя базового актива
+        underlying_base = underlying_symbol.replace("-", "").upper()
+        
+        options = []
+        for sec in all_securities:
+            symbol = sec.get("symbol", "")
+            sec_type = sec.get("type", "")
+            
+            # Проверяем, что это опцион (по типу инструмента)
+            if not sec_type:
+                continue
+                
+            is_option = (
+                "Call" in sec_type or 
+                "Put" in sec_type or
+                sec.get("secType") == "OP"
+            )
+            
+            if not is_option:
+                continue
+            
+            # Проверяем принадлежность к базовому активу
+            # Ищем имя базового актива в описании опциона
+            type_lower = sec_type.lower()
+            
+            # Извлекаем имя базового актива из описания опциона
+            # Например: "Марж. амер. Call 80 с исп. 18 июня на фьюч. контр. Si-6.26"
+            if underlying_base in type_lower or underlying_base in symbol.upper():
+                options.append(sec)
+            elif "на фьюч. контр." in type_lower:
+                # Извлекаем имя фьючерса после "на фьюч. контр."
+                parts = type_lower.split("на фьюч. контр.")
+                if len(parts) > 1:
+                    futures_name = parts[1].strip().split()[0] if parts[1].strip() else ""
+                    # Si-6.26 -> Si
+                    futures_base = futures_name.split("-")[0].upper() if "-" in futures_name else futures_name.upper()
+                    if underlying_base == futures_base:
+                        options.append(sec)
+        
+        return options
+
+    def get_option_expirations(self, underlying_symbol, exchange="MOEX", sector="FORTS"):
+        """
+        Получение списка дат экспирации для опционов на базовый актив.
+        Возвращает список уникальных экспираций в формате 'MM.YY'
+        """
+        options = self.get_options_by_underlying(underlying_symbol, exchange, sector)
+
+        expirations = set()
+        for opt in options:
+            symbol = opt.get("symbol", "")
+            opt_type = opt.get("type", "")
+            
+            # Пробуем извлечь из описания типа (новый формат)
+            if "на фьюч. контр." in opt_type.lower():
+                parts = opt_type.lower().split("на фьюч. контр.")
+                if len(parts) > 1:
+                    futures_part = parts[1].strip()
+                    # Si-6.26 -> 6.26
+                    futures_match = re.match(r'([a-z]+)-(\d+\.\d+)', futures_part)
+                    if futures_match:
+                        expirations.add(futures_match.group(2))  # 6.26
+            
+            # Старый формат символа
+            if '-' in symbol and not expirations:
+                parts = symbol.split('-')[1]  # 6.26C92000
+                # Находим позицию C или P
+                for i, c in enumerate(parts):
+                    if c in ('C', 'P'):
+                        expirations.add(parts[:i])  # 6.26
+                        break
+
+        return sorted(list(expirations))
 
     # --- WEBSOCKET АПИ Методы (Real-time) ---
 

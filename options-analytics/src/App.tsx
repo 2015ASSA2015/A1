@@ -405,6 +405,50 @@ function App() {
     };
   }, [spotPrice, totalDTE]);
 
+  // Find exact zero PnL crossings and calculate analytical Probability of Profit (POP)
+  const { breakevens, pop } = useMemo(() => {
+    if (legs.length === 0 || timeSteps.length === 0 || chartData.length === 0) return { breakevens: [], pop: null };
+    const lastKey = timeSteps[timeSteps.length - 1].key;
+    const bes: number[] = [];
+    
+    // Scan vertices for algorithmic crossings
+    for (let i = 0; i < chartData.length - 1; i++) {
+      const p1 = chartData[i].price, v1 = chartData[i][lastKey];
+      const p2 = chartData[i+1].price, v2 = chartData[i+1][lastKey];
+      if (v1 === 0 && (i === 0 || chartData[i-1][lastKey] !== 0)) {
+        bes.push(p1);
+      } else if (v1 * v2 < 0) {
+        const ratio = Math.abs(v1) / (Math.abs(v1) + Math.abs(v2));
+        bes.push(Math.round(p1 + ratio * (p2 - p1)));
+      }
+    }
+
+    // Integrate profitable areas using Lognormal CDF
+    let profitProb = 0;
+    const T = Math.max(0.001, totalDTE) / 365;
+    const atmIV = 0.20;
+    const cdf = (x: number) => {
+       const d2 = (Math.log(spotPrice / x) - (atmIV * atmIV / 2) * T) / (atmIV * Math.sqrt(T));
+       return normalCDF(-d2);
+    };
+
+    const bounds = [0, ...bes, chartData[chartData.length-1].price * 10]; // [0 ... BEs ... Infinity]
+    for (let i = 0; i < bounds.length - 1; i++) {
+        const midPoint = (bounds[i] + bounds[i+1]) / 2;
+        let pnl = 0;
+        legs.forEach(leg => {
+           let val = leg.type === 'Call' ? Math.max(0, midPoint - leg.strike) : Math.max(0, leg.strike - midPoint);
+           pnl += (val - leg.premium) * leg.qty * (leg.position === 'Long' ? 1 : -1);
+        });
+        if (pnl > 0) profitProb += (cdf(bounds[i+1]) - (bounds[i] === 0 ? 0 : cdf(bounds[i])));
+    }
+    
+    return { 
+      breakevens: [...new Set(bes)].sort((a,b)=>a-b), 
+      pop: Math.min(100, Math.max(0, profitProb * 100)) 
+    };
+  }, [chartData, timeSteps, legs, spotPrice, totalDTE]);
+
   const GREEKS_META = [
     { key: 'delta', label: 'Delta (Δ)', color: '#10b981', unit: '' },
     { key: 'gamma', label: 'Gamma (Γ)', color: '#8b5cf6', unit: '' },
@@ -606,7 +650,10 @@ function App() {
               <div className="stat-box-mini">Net: <span className={totalPremium >= 0 ? 'text-profit' : 'text-loss'}>{totalPremium.toLocaleString()}</span></div>
               <div className="stat-box-mini">ГО: <span style={{ color: '#90a0b6' }}>{maxRisk !== null ? maxRisk.toLocaleString() : '—'}</span></div>
               <div className="stat-box-mini">Max PnL: <span className="text-profit">{maxProfit !== null ? maxProfit.toLocaleString() : '—'}</span></div>
-              <div className="stat-box-mini">RoC: <span className="text-profit">{maxProfit !== null ? `${roc.toFixed(1)}%` : '—'}</span></div>
+              <div className="stat-box-mini">POP: <span className={pop && pop > 50 ? 'text-profit' : 'text-loss'}>{pop !== null ? `${pop.toFixed(1)}%` : '—'}</span></div>
+              <div className="stat-box-mini" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                B.E.: <span style={{ color: '#fff' }}>{breakevens.length > 0 ? breakevens.map(b => b.toLocaleString()).join(', ') : 'None'}</span>
+              </div>
               <div className="stat-box-mini">RoC p.a.: <span className="text-profit">{maxProfit !== null ? `${annualizedRoc.toFixed(0)}%` : '—'}</span></div>
             </div>
           </div>

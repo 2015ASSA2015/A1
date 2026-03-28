@@ -92,22 +92,39 @@ class AlorApi:
 async def test_main():
     # Замените на ваш реальный Refresh Token
     MY_REFRESH_TOKEN = "48ca265c-b7e6-4c25-b45e-bd7cb194feae"
-    print(f"Попытка подключения с токеном: {MY_REFRESH_TOKEN[:5]}...***")
     api = AlorApi(MY_REFRESH_TOKEN)
-
-    async def handle_data(data):
-        print(f"Пришли данные: {data}")
-
-    # Запускаем WS в фоне
-    ws_task = asyncio.create_task(api.run_ws(handle_data))
     
-    # Подписываемся на Сбербанк (для примера)
+    print("\n[1/3] Проверка авторизации (REST)...")
+    token = api.get_token()
+    if token:
+        print(f"✅ Успешная авторизация! JWT получен: {token[:10]}...")
+    else:
+        print("❌ Ошибка авторизации. Проверьте Refresh Token.")
+        return
+
+    print("\n[2/3] Получение данных об инструменте (GAZP)...")
+    gavp_info = api.get_quotes("GAZP") # Используем REST метод
+    if gavp_info:
+        print(f"✅ Данные получены! Текущая цена ГАЗПРОМА (REST): {gavp_info[0].get('last_price', 'неизвестна')}")
+    else:
+        print("❌ Ошибка при получении данных REST. Возможно не тот рынок.")
+
+    print("\n[3/3] Проверка живого потока (WebSocket)...")
+    async def handle_data(data):
+        print(f"🔥 ПРИШЛИ ЖИВЫЕ ДАННЫЕ: {data}")
+
+    ws_task = asyncio.create_task(api.run_ws(handle_data))
     await asyncio.sleep(2) # Ждем коннекта
+    
+    # Пытаемся подписаться на котировки
+    print("Отправка подписки на WS 'SBER'...")
     await api.subscribe_quotes("SBER")
     
-    # Держим скрипт запущенным 10 секунд
-    await asyncio.sleep(10)
+    # Ждем 5 секунд на данные
+    print("Ожидаем обновлений в течение 5 секунд...")
+    await asyncio.sleep(5)
     ws_task.cancel()
+    print("\n--- ТЕСТ ЗАВЕРШЕН ---")
 
 if __name__ == "__main__":
     asyncio.run(test_main())

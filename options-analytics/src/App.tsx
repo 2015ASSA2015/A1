@@ -435,9 +435,14 @@ function App() {
             </div>
             <div style={{ height: 160, width: '100%' }}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={smileData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                <LineChart data={smileData} margin={{ top: 5, right: 10, left: -20, bottom: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="strike" hide />
+                  <XAxis 
+                    dataKey="strike" 
+                    stroke="#90a0b6" 
+                    fontSize={8} 
+                    tickFormatter={v => v.toLocaleString()}
+                  />
                   <YAxis stroke="#90a0b6" fontSize={9} domain={['auto', 'auto']} unit="%" />
                   <Tooltip 
                     contentStyle={{ backgroundColor: 'rgba(10,12,16,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 10 }}

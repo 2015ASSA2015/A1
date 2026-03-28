@@ -47,6 +47,19 @@ class AlorApi:
         response = requests.get(url, headers=self._get_headers())
         return response.json() if response.status_code == 200 else None
 
+    def get_securities(self, query, exchange="MOEX"):
+        """Поиск инструментов по коду или названию"""
+        url = f"{self.API_URL}/md/v2/Securities"
+        params = {"query": query, "sector": "FORTS", "format": "Simple", "limit": 10}
+        response = requests.get(url, headers=self._get_headers(), params=params)
+        return response.json() if response.status_code == 200 else []
+
+    def get_instrument_info(self, symbol, exchange="MOEX"):
+        """Получение детальной информации об инструменте"""
+        url = f"{self.API_URL}/md/v2/Securities/{exchange}/{symbol}"
+        response = requests.get(url, headers=self._get_headers())
+        return response.json() if response.status_code == 200 else None
+
     # --- WEBSOCKET АПИ Методы (Real-time) ---
 
     async def run_ws(self, on_message_cb):
@@ -102,26 +115,38 @@ async def test_main():
         print("❌ Ошибка авторизации. Проверьте Refresh Token.")
         return
 
-    print("\n[2/3] Получение данных об инструменте (GAZP)...")
-    gavp_info = api.get_quotes("GAZP") # Используем REST метод
-    if gavp_info:
-        print(f"✅ Данные получены! Текущая цена ГАЗПРОМА (REST): {gavp_info[0].get('last_price', 'неизвестна')}")
+    print("\n[2/3] Поиск инструмента (SiM6)...")
+    search_res = api.get_securities("SiM6")
+    if search_res:
+        print(f"✅ Найдено {len(search_res)} инструментов по запросу SiM6:")
+        for res in search_res[:3]: # Показать первые 3
+            print(f" - {res['symbol']} ({res['description']}) на {res['exchange']}")
     else:
-        print("❌ Ошибка при получении данных REST. Возможно не тот рынок.")
+        print("❌ Инструменты не найдены.")
 
-    print("\n[3/3] Проверка живого потока (WebSocket)...")
+    print("\n[3/3] Настройка живого потока (SI-6.26)...")
+    
+    # Проверим детальную информацию об инструменте
+    si_info = api.get_instrument_info("SI-6.26", exchange="MOEX")
+    if si_info:
+        print(f"✅ Инфо SI-6.26: {json.dumps(si_info, indent=2, ensure_ascii=False)}")
+    else:
+        print("❌ Не удалось получить инфо SI-6.26 (MOEX). Пробуем FORTS...")
+        si_info = api.get_instrument_info("SI-6.26", exchange="FORTS")
+        if si_info:
+            print(f"✅ Инфо SI-6.26 (FORTS): {json.dumps(si_info, indent=2, ensure_ascii=False)}")
+
     async def handle_data(data):
-        print(f"🔥 ПРИШЛИ ЖИВЫЕ ДАННЫЕ: {data}")
+        if data.get("data"):
+            print(f"🔥 ПРИШЛИ ЖИВЫЕ ДАННЫЕ (SI-6.26): {data['data']}")
 
     ws_task = asyncio.create_task(api.run_ws(handle_data))
     await asyncio.sleep(2) # Ждем коннекта
     
-    # Пытаемся подписаться на котировки
-    print("Отправка подписки на WS 'SBER'...")
-    await api.subscribe_quotes("SBER")
+    print("Отправка подписки на WS 'SI-6.26' (FORTS)...")
+    await api.subscribe_quotes("SI-6.26", exchange="FORTS")
     
-    # Ждем 5 секунд на данные
-    print("Ожидаем обновлений в течение 5 секунд...")
+    print("Ожидаем обновлений 5 секунд...")
     await asyncio.sleep(5)
     ws_task.cancel()
     print("\n--- ТЕСТ ЗАВЕРШЕН ---")

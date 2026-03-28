@@ -106,6 +106,26 @@ function App() {
   const [totalDTE, setTotalDTE] = useState(82);
   const [timeStepDays, setTimeStepDays] = useState(1);
   const [legs, setLegs] = useState<OptionLeg[]>([]);
+  const [isLive, setIsLive] = useState(false);
+
+  // ─── Live Market Simulator ───────────────────────────────────────────────
+  
+  useEffect(() => {
+    if (!isLive) return;
+    
+    // Simulate tick data every 800ms
+    const interval = setInterval(() => {
+      setSpotPrice(prev => {
+        // Simple random walk with slightly mean-reverting drift
+        const asset = ASSETS[0];
+        const volatility = asset.step * 0.4; 
+        const change = (Math.random() - 0.5) * volatility;
+        return Math.round(prev + change);
+      });
+    }, 800);
+    
+    return () => clearInterval(interval);
+  }, [isLive]);
 
   // ─── Dynamic DTE Calculation ───────────────────────────────────────────────
   useEffect(() => {
@@ -204,9 +224,18 @@ function App() {
     
     for (let i = 0; i < strikeCount; i++) {
       const strike = min + i * step;
-      const dist = Math.abs(strike - spotPrice) / spotPrice;
-      const callIV = 0.2 + dist * 0.5;
-      const putIV = 0.22 + dist * 0.45;
+      // Mathematically realistic quadratic Volatility Smile with right-tail skew (typical for Si).
+      // Model: IV(K) = ATM_IV + Slope*M + Convexity*M^2 (where M is relative moneyness % distance).
+      const m = (strike - spotPrice) / spotPrice;
+      const atmIV = 0.20;
+      const slope = 0.15; // Represents 'fear' dragging IV higher on the right tail (Calls)
+      const convexity = 12.0;
+
+      const baseIV = atmIV + (slope * m) + (convexity * m * m);
+      const modeledIV = Math.max(0.15, baseIV); // Floor at 15%
+
+      const callIV = modeledIV;
+      const putIV = modeledIV;
       const T = totalDTE / 365;
       
       const callPrice = bsPrice(spotPrice, strike, T, RISK_FREE, callIV, 'Call');
@@ -416,9 +445,14 @@ function App() {
         </div>
 
         <div className="top-info">
-          <div className={`api-status ${apiStatus}`}>
-            <Activity size={14} />
-            {apiStatus === 'connected' ? 'LIVE' : 'OFFLINE'}
+          <div 
+            className={`api-status ${isLive ? 'connected' : 'offline'}`}
+            onClick={() => setIsLive(!isLive)}
+            style={{ cursor: 'pointer', transition: 'all 0.3s' }}
+            title={isLive ? "Остановить симуляцию" : "Запустить симулятор потока"}
+          >
+            <Activity size={14} color={isLive ? '#10b981' : '#a1a1aa'} />
+            <span style={{ color: isLive ? '#10b981' : '#a1a1aa' }}>{isLive ? 'LIVE SIM' : 'SIM OFF'}</span>
           </div>
         </div>
       </header>

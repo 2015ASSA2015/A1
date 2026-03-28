@@ -241,14 +241,28 @@ function App() {
       const callPrice = bsPrice(spotPrice, strike, T, RISK_FREE, callIV, 'Call');
       const putPrice = bsPrice(spotPrice, strike, T, RISK_FREE, putIV, 'Put');
       
+      const callDelta = bsDelta(spotPrice, strike, T, RISK_FREE, callIV, 'Call');
+      const putDelta = bsDelta(spotPrice, strike, T, RISK_FREE, putIV, 'Put');
+      
+      // Simulated Liquidity: peaks near ATM and psychological round strikes
+      const dist = Math.abs(strike - spotPrice) / spotPrice;
+      const baseVol = 8000 * Math.exp(-Math.pow(dist * 18, 2)); 
+      const roundSpike = strike % 5000 === 0 ? 6000 : 0;
+      const callVol = Math.round(baseVol + roundSpike * (0.5 + Math.random() * 0.5)) + Math.floor(Math.random() * 100);
+      const putVol = Math.round(baseVol + roundSpike * (0.5 + Math.random() * 0.5)) + Math.floor(Math.random() * 100);
+      
       data.push({
         strike,
+        callVol,
         callBid: Math.round(callPrice * 0.998),
         callAsk: Math.round(callPrice * 1.002),
         callIV,
+        callDelta,
+        putVol,
         putBid: Math.round(putPrice * 0.998),
         putAsk: Math.round(putPrice * 1.002),
         putIV,
+        putDelta,
       });
     }
     return data;
@@ -368,6 +382,29 @@ function App() {
     return Math.abs(Math.min(...expPnL, 0));
   }, [chartData, timeSteps, legs]);
 
+  const maxProfit = useMemo(() => {
+    if (legs.length === 0 || timeSteps.length === 0 || chartData.length === 0) return null;
+    const lastKey = timeSteps[timeSteps.length - 1].key;
+    const expPnL = chartData.map(p => p[lastKey]);
+    return Math.max(...expPnL, 0);
+  }, [chartData, timeSteps, legs]);
+
+  // MOEX / FORTS Margin Proxy: uses the ±30% bounds worst-case scan (similar to SPAN)
+  const marginGO = maxRisk !== null ? Math.max(maxRisk, 1) : 0; 
+  const roc = maxProfit !== null && marginGO > 1 ? (maxProfit / marginGO) * 100 : 0;
+  const annualizedRoc = totalDTE > 0 ? roc * (365 / Math.max(1, totalDTE)) : roc * 365;
+
+  // Expected Move (1 Standard Deviation / 68.2% Probability) calculation
+  const expectedMove = useMemo(() => {
+    const atmIV = 0.20; // Base market volatility proxy for cone
+    const T = Math.max(0.001, totalDTE) / 365;
+    const move = spotPrice * atmIV * Math.sqrt(T);
+    return {
+      lower: Math.round(spotPrice - move),
+      upper: Math.round(spotPrice + move)
+    };
+  }, [spotPrice, totalDTE]);
+
   const GREEKS_META = [
     { key: 'delta', label: 'Delta (Δ)', color: '#10b981', unit: '' },
     { key: 'gamma', label: 'Gamma (Γ)', color: '#8b5cf6', unit: '' },
@@ -480,23 +517,52 @@ function App() {
             <table className="board-table">
               <thead>
                 <tr>
-                  <th colSpan={3}>Calls</th>
+                  <th colSpan={5}>Calls</th>
                   <th>K</th>
-                  <th colSpan={3}>Puts</th>
+                  <th colSpan={5}>Puts</th>
+                </tr>
+                <tr>
+                  <th style={{ fontSize: 9 }}>Vol / O.I.</th>
+                  <th style={{ fontSize: 9 }}>IV</th>
+                  <th style={{ fontSize: 9 }}>Delta</th>
+                  <th style={{ fontSize: 9 }}>Bid</th>
+                  <th style={{ fontSize: 9 }}>Ask</th>
+                  <th style={{ fontSize: 9 }}>Strike</th>
+                  <th style={{ fontSize: 9 }}>Bid</th>
+                  <th style={{ fontSize: 9 }}>Ask</th>
+                  <th style={{ fontSize: 9 }}>Delta</th>
+                  <th style={{ fontSize: 9 }}>IV</th>
+                  <th style={{ fontSize: 9 }}>Vol / O.I.</th>
                 </tr>
               </thead>
               <tbody>
-                {optionBoardData.map(row => (
-                  <tr key={row.strike} className={Math.abs(row.strike - spotPrice) < 250 ? 'atm-row' : ''}>
-                    <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.callIV * 100).toFixed(0)}%</td>
-                    <td className="call-cell" onClick={() => addLeg('Call', 'Short', row.strike, row.callBid, row.callIV)}>{row.callBid}</td>
-                    <td className="call-cell" onClick={() => addLeg('Call', 'Long', row.strike, row.callAsk, row.callIV)}>{row.callAsk}</td>
-                    <td className="strike-col">{row.strike}</td>
-                    <td className="put-cell" onClick={() => addLeg('Put', 'Short', row.strike, row.putBid, row.putIV)}>{row.putBid}</td>
-                    <td className="put-cell" onClick={() => addLeg('Put', 'Long', row.strike, row.putAsk, row.putIV)}>{row.putAsk}</td>
-                    <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.putIV * 100).toFixed(0)}%</td>
-                  </tr>
-                ))}
+                {optionBoardData.map(row => {
+                  // Heatmap percentages
+                  const cVolPct = Math.min(100, Math.round((row.callVol / 15000) * 100));
+                  const pVolPct = Math.min(100, Math.round((row.putVol / 15000) * 100));
+                  
+                  return (
+                    <tr key={row.strike} className={Math.abs(row.strike - spotPrice) < 250 ? 'atm-row' : ''}>
+                      <td style={{ fontSize: 9, opacity: 0.8, color: '#90a0b6', position: 'relative' }}>
+                        <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: `${cVolPct}%`, backgroundColor: 'rgba(59, 130, 246, 0.15)', zIndex: 0 }} />
+                        <span style={{ position: 'relative', zIndex: 1 }}>{row.callVol.toLocaleString()}</span>
+                      </td>
+                      <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.callIV * 100).toFixed(0)}%</td>
+                      <td style={{ fontSize: 9, color: '#10b981', opacity: Math.max(0.3, Math.abs(row.callDelta)) }}>{row.callDelta.toFixed(2)}</td>
+                      <td className="call-cell" onClick={() => addLeg('Call', 'Short', row.strike, row.callBid, row.callIV)}>{row.callBid}</td>
+                      <td className="call-cell" onClick={() => addLeg('Call', 'Long', row.strike, row.callAsk, row.callIV)}>{row.callAsk}</td>
+                      <td className="strike-col">{row.strike}</td>
+                      <td className="put-cell" onClick={() => addLeg('Put', 'Short', row.strike, row.putBid, row.putIV)}>{row.putBid}</td>
+                      <td className="put-cell" onClick={() => addLeg('Put', 'Long', row.strike, row.putAsk, row.putIV)}>{row.putAsk}</td>
+                      <td style={{ fontSize: 9, color: '#ef4444', opacity: Math.max(0.3, Math.abs(row.putDelta)) }}>{row.putDelta.toFixed(2)}</td>
+                      <td style={{ fontSize: 9, opacity: 0.6 }}>{(row.putIV * 100).toFixed(0)}%</td>
+                      <td style={{ fontSize: 9, opacity: 0.8, color: '#90a0b6', position: 'relative', textAlign: 'left' }}>
+                        <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${pVolPct}%`, backgroundColor: 'rgba(59, 130, 246, 0.15)', zIndex: 0 }} />
+                        <span style={{ position: 'relative', zIndex: 1, paddingLeft: 4 }}>{row.putVol.toLocaleString()}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -538,7 +604,10 @@ function App() {
             <div className="widget-title"><TrendingUp size={18} className="text-secondary" /> Strategy Profile</div>
             <div className="stat-group-mini">
               <div className="stat-box-mini">Net: <span className={totalPremium >= 0 ? 'text-profit' : 'text-loss'}>{totalPremium.toLocaleString()}</span></div>
-              <div className="stat-box-mini">Risk: <span className="text-loss">{maxRisk !== null ? maxRisk.toLocaleString() : '—'}</span></div>
+              <div className="stat-box-mini">ГО: <span style={{ color: '#90a0b6' }}>{maxRisk !== null ? maxRisk.toLocaleString() : '—'}</span></div>
+              <div className="stat-box-mini">Max PnL: <span className="text-profit">{maxProfit !== null ? maxProfit.toLocaleString() : '—'}</span></div>
+              <div className="stat-box-mini">RoC: <span className="text-profit">{maxProfit !== null ? `${roc.toFixed(1)}%` : '—'}</span></div>
+              <div className="stat-box-mini">RoC p.a.: <span className="text-profit">{maxProfit !== null ? `${annualizedRoc.toFixed(0)}%` : '—'}</span></div>
             </div>
           </div>
 
@@ -557,6 +626,17 @@ function App() {
                       labelStyle={{ color: '#fff', fontWeight: 600 }}
                       labelFormatter={v => `Цена БА: ${v.toLocaleString()}`} 
                     />
+                    
+                    {/* Probability Cone / ±1 STD Expected Move */}
+                    <ReferenceArea 
+                      x1={expectedMove.lower} 
+                      x2={expectedMove.upper} 
+                      fill="rgba(16, 185, 129, 0.05)" 
+                      strokeOpacity={0} 
+                    />
+                    <ReferenceLine x={expectedMove.lower} stroke="rgba(16, 185, 129, 0.25)" strokeDasharray="3 3" label={{ position: 'insideBottomLeft', value: '-1σ', fill: 'rgba(16, 185, 129, 0.7)', fontSize: 10, offset: 10 }} />
+                    <ReferenceLine x={expectedMove.upper} stroke="rgba(16, 185, 129, 0.25)" strokeDasharray="3 3" label={{ position: 'insideBottomRight', value: '+1σ', fill: 'rgba(16, 185, 129, 0.7)', fontSize: 10, offset: 10 }} />
+
                     <ReferenceLine x={spotPrice} stroke="#3b82f6" strokeDasharray="3 3" label={{ position: 'top', value: 'Spot', fill: '#3b82f6', fontSize: 10, fontWeight: 600 }} />
                     <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
                     {timeSteps.map((step, idx) => (

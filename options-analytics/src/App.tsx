@@ -172,8 +172,8 @@ function App() {
   }, [strikeCount, spotPrice, selectedAsset]);
 
   const [chartRange, setChartRange] = useState({ min: spotPrice * 0.95, max: spotPrice * 1.05 });
-  const [refAreaLeft, setRefAreaLeft] = useState<number | null>(null);
-  const [refAreaRight, setRefAreaRight] = useState<number | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStartX, setPanStartX] = useState<number | null>(null);
 
   const axisTicks = useMemo(() => {
     const ticks = [];
@@ -189,31 +189,46 @@ function App() {
 
   const resetChart = () => {
     setChartRange({ min: boardRange.min - 500, max: boardRange.max + 500 });
-    setRefAreaLeft(null);
-    setRefAreaRight(null);
+    setIsPanning(false);
+    setPanStartX(null);
   };
 
   const handleWheel = (e: React.WheelEvent) => {
-    const zoomFactor = 0.1;
+    const zoomFactor = 0.15;
     const delta = e.deltaY > 0 ? 1 : -1;
-    const width = chartRange.max - chartRange.min;
-    const amount = width * zoomFactor * delta;
-    setChartRange({
-      min: chartRange.min - amount / 2,
-      max: chartRange.max + amount / 2
+    setChartRange(prev => {
+      const width = prev.max - prev.min;
+      const amount = width * zoomFactor * delta;
+      if (width + amount < 1000) return prev; // max zoom in limit
+      return {
+        min: prev.min - amount / 2,
+        max: prev.max + amount / 2
+      };
     });
   };
 
-  const handleMouseDown = (e: any) => e && setRefAreaLeft(e.activeLabel);
-  const handleMouseMove = (e: any) => refAreaLeft !== null && e && setRefAreaRight(e.activeLabel);
-  const handleMouseUp = () => {
-    if (refAreaLeft !== null && refAreaRight !== null && refAreaLeft !== refAreaRight) {
-      let [l, r] = [Number(refAreaLeft), Number(refAreaRight)];
-      if (l > r) [l, r] = [r, l];
-      setChartRange({ min: l, max: r });
+  const handleMouseDown = (e: any) => {
+    if (e && e.chartX !== undefined) {
+      setIsPanning(true);
+      setPanStartX(e.chartX);
     }
-    setRefAreaLeft(null);
-    setRefAreaRight(null);
+  };
+
+  const handleMouseMove = (e: any) => {
+    if (isPanning && panStartX !== null && e && e.chartX !== undefined) {
+      const deltaX = e.chartX - panStartX;
+      setChartRange(prev => {
+        const width = 800; // rough chart div width
+        const dataDelta = deltaX * ((prev.max - prev.min) / width);
+        return { min: prev.min - dataDelta, max: prev.max - dataDelta };
+      });
+      setPanStartX(e.chartX);
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsPanning(false);
+    setPanStartX(null);
   };
 
   // ─── Data Generation ────────────────────────────────────────────────────────
@@ -663,9 +678,8 @@ function App() {
               <>
                 <button onClick={resetChart} className="button-glass" style={{ position: 'absolute', top: 10, right: 10, zIndex: 10, fontSize: 10 }}>Reset</button>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} style={{ cursor: 'crosshair' }}>
+                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp} style={{ cursor: isPanning ? 'grabbing' : 'grab' }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    {refAreaLeft && refAreaRight && <ReferenceArea x1={refAreaLeft} x2={refAreaRight} fill="rgba(59,130,246,0.2)" />}
                     <XAxis dataKey="price" stroke="#90a0b6" fontSize={10} domain={[chartRange.min, chartRange.max]} type="number" allowDataOverflow ticks={axisTicks} tickFormatter={v => (v / 1000).toFixed(1) + 'k'} />
                     <YAxis stroke="#90a0b6" fontSize={10} />
                     <Tooltip 
